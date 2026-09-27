@@ -8,10 +8,16 @@ NCS(국가직무능력표준) 데이터 수집 스크립트
 
 사용법:
     pip install requests
-    python fetch_ncs.py
+    이 파일과 같은 폴더에 "service_key.txt" 파일을 만들고, 그 안에 본인
+    공공데이터포털 계정의 Decoding 인증키만 한 줄로 붙여넣기 (다른 텍스트 없이
+    키 값만). 그다음 실행:
+        python fetch_ncs.py
 
 주의:
-- SERVICE_KEY는 본인 공공데이터포털 계정의 Decoding 인증키로 교체해서 사용.
+- 인증키는 절대 이 .py 파일에 직접 적지 말 것 — "service_key.txt"에만 넣고,
+  그 파일은 .gitignore에 등록해서 깃허브에 올라가지 않게 할 것. (예전에 키를
+  이 파일에 직접 적었다가 깃허브 public 레포에 올라간 적이 있어서, 이후로는
+  키와 코드를 반드시 분리해서 관리하기로 함 — 재발급도 이미 완료.)
 - NCS005(능력단위분류코드 조회), NCS006(능력단위요소 조회), NCS007(키워드 검색)의
   파라미터명은 아직 화면으로 확인하지 못해서 추정치를 넣어뒀음. 실행했을 때
   NO_MANDATORY_REQUEST_PARAMETER_ERROR가 나오면, data.go.kr 마이페이지에서
@@ -19,15 +25,36 @@ NCS(국가직무능력표준) 데이터 수집 스크립트
   (NCS002/NCS004 파라미터명을 확인했던 것과 같은 방법).
 """
 
+import os
+import sys
 import time
 import json
 import requests
 
 BASE_URL = "https://apis.data.go.kr/B490007/hrdkapi"
-SERVICE_KEY = "3ce142340961a166e1124d84d1a7d6ba5f3c09fc379df473b1b77c5358411afa"
 
 # 확인된 최신 NCS 차수 (NCS001 응답에서 USG_YN="Y"였던 값)
 CURRENT_DEGR = 29
+
+
+def load_service_key() -> str:
+    """이 스크립트와 같은 폴더의 service_key.txt에서 인증키를 읽어온다.
+    코드에 키를 직접 적지 않기 위한 용도 — 이 파일은 .gitignore로 관리."""
+    key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "service_key.txt")
+    if not os.path.exists(key_path):
+        sys.exit(
+            f"[오류] {key_path} 파일이 없습니다.\n"
+            f"이 스크립트와 같은 폴더에 'service_key.txt' 파일을 만들고,\n"
+            f"그 안에 공공데이터포털 Decoding 인증키만 한 줄로 붙여넣어주세요."
+        )
+    with open(key_path, "r", encoding="utf-8") as f:
+        key = f.read().strip()
+    if not key:
+        sys.exit(f"[오류] {key_path} 파일이 비어있습니다. 인증키를 붙여넣어주세요.")
+    return key
+
+
+SERVICE_KEY = load_service_key()
 
 
 def call_ncs(operation: str, params: dict, retries: int = 3, timeout: int = 15) -> dict:
