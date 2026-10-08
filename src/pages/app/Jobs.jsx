@@ -22,7 +22,7 @@ import {
   ALL_REGION,
   REMOTE_REGION,
   REGIONS,
-  CAREER_LEVELS,
+  JOB_CAREER_LEVELS,
   NCS_GROUPS_BY_CATEGORY,
 } from '../../constants/jobCategories.js'
 
@@ -331,7 +331,7 @@ export default function Jobs() {
         <div className="mt-4">
           <span className="text-footer text-slate">경력</span>
           <div className="mt-2 flex flex-wrap gap-2">
-            {CAREER_LEVELS.map((c) => {
+            {JOB_CAREER_LEVELS.map((c) => {
               const isActive = careerLevel === c
               return (
                 <button

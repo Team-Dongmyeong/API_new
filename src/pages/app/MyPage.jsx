@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Heartbeat, ChatCircleDots, Briefcase, UserCircle, Megaphone, Compass } from '@phosphor-icons/react'
 import { useAuth } from '../../context/AuthContext.jsx'
 import { usePreference } from '../../context/PreferenceContext.jsx'
-import { ALL_REGION, REMOTE_REGION, REGIONS } from '../../constants/jobCategories.js'
+import { ALL_REGION, REMOTE_REGION, REGIONS, CAREER_LEVELS } from '../../constants/jobCategories.js'
 
 // 전부 더미 데이터 — 백엔드(kcELECTRA/SBERT/RAG) 연동 전 화면 확인용.
 const EMOTION_PATTERN = [
@@ -220,6 +220,8 @@ export default function MyPage() {
     preferredRegion,
     hasRegionPreference,
     setPreferredRegion,
+    careerLevel,
+    setCareerLevel,
     // "추천직업" 탭 전용 — 채용공고 스마트픽과 똑같은 recommendedJobs(세부직무 TOP3)를
     // 그대로 구독해서 씀. 이 값이 바뀌면(진단/채팅 결과 갱신) 이 탭과 스마트픽이
     // 항상 같은 3개를 동시에 보여주게 됨 — 둘 다 PreferenceContext라는 같은 소스를
@@ -453,6 +455,10 @@ export default function MyPage() {
                       )}
                     </dd>
                   </div>
+                  <div className="flex items-center justify-between border-b border-ink/8 pb-3">
+                    <dt className="text-[13px] text-slate">경력 구분</dt>
+                    <dd className="text-[14px] font-semibold text-ink">{careerLevel}</dd>
+                  </div>
                   <div className="flex items-center justify-between">
                     <dt className="text-[13px] text-slate">알림 수신</dt>
                     <dd className="text-[14px] font-semibold text-ink">{notifyOn ? '동의함' : '동의 안 함'}</dd>
@@ -482,6 +488,21 @@ export default function MyPage() {
                         </option>
                       ))}
                       <option value={REMOTE_REGION}>{REMOTE_REGION}</option>
+                    </select>
+                  </label>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    경력 구분
+                    <select
+                      value={careerLevel}
+                      onChange={(event) => setCareerLevel(event.target.value)}
+                      className="mt-2 w-full rounded-btn border-[1.5px] border-taupe bg-white px-4 py-2.5 text-[14px] font-normal text-ink focus:border-ink focus:outline-none"
+                    >
+                      {CAREER_LEVELS.map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
                     </select>
                   </label>
 

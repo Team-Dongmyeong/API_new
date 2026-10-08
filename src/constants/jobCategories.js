@@ -80,8 +80,19 @@ export const REGIONS = [
   { value: '제주', label: '제주특별자치도' },
 ]
 
-// 경력 수준 필터 — 대분류/세부직무와는 별개 축.
-export const CAREER_LEVELS = ['신입', '인턴']
+// 마이페이지 "내 정보" 카드의 경력 구분 입력(사용자 본인의 경력 상태) + (나중에)
+// 스마트픽 조회 조건용. 공유 레포(share_project)에서 경민님이 먼저 만들어둔 값과
+// 이름/구성을 맞춤 — 바로 아래 JOB_CAREER_LEVELS(채용공고 자체의 모집 경력 필터)와는
+// 이름은 비슷해도 완전히 다른 축이라 헷갈리지 않게 분리해둠.
+// TODO(백엔드 연동 전): 지금은 PreferenceContext에 프론트 로컬 상태로만 저장돼요.
+// 병철님이 profiles에 career_level 컬럼을 추가하고 GET/PATCH /me가 만들어지면,
+// PreferenceContext의 careerLevel 저장 지점만 그 API 호출로 바꾸면 됨.
+export const CAREER_LEVELS = ['무관', '신입', '경력']
+
+// 채용공고 리스트 필터(Jobs.jsx)에서 쓰는 "이 공고가 모집하는 경력" 필터 — 위
+// CAREER_LEVELS(내 프로필의 경력 구분)와는 다른 축이라 이름을 분리함. 실제 공고
+// 데이터(job.type)에 '신입'/'인턴'만 나타나서 이 두 값만 둠.
+export const JOB_CAREER_LEVELS = ['신입', '인턴']
 
 // 대분류 하나가 실제로는 NCS 대분류 코드 여러 개로 이루어진 경우가 있음(예: '디자인'
 // 안에 '문화예술디자인방송'뿐 아니라 패션디자이너 때문에 '섬유의복'도 섞여 있음).

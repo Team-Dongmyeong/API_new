@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState } from 'react'
-import { JOB_CATEGORIES, ALL_SUB_JOBS, ALL_REGION } from '../constants/jobCategories.js'
+import { JOB_CATEGORIES, ALL_SUB_JOBS, ALL_REGION, CAREER_LEVELS } from '../constants/jobCategories.js'
 
 // "선호 추천 분야"(대분류 1개)와 "추천 직업 3개"(세부직무 단위, 채용공고 스마트픽용)를
 // 앱 전체에서 공유하는 Context.
@@ -81,6 +81,11 @@ export function PreferenceProvider({ children }) {
   // 지역 드롭다운과 똑같은 목록(ALL_REGION/REGIONS/REMOTE_REGION)을 그대로 씀.
   // 기본값은 ALL_REGION('전체 지역') = 아직 특정 지역을 고르지 않은 상태.
   const [preferredRegion, setPreferredRegion] = useState(ALL_REGION)
+
+  // 경력 구분 — 선호 근무 지역과 마찬가지로 검사/채팅 결과가 아니라 마이페이지에서
+  // 사용자가 직접 고르는 값(공유 레포 기준 CAREER_LEVELS = ['무관', '신입', '경력']).
+  // 기본값은 CAREER_LEVELS[0]('무관') = 아직 특정 경력을 고르지 않은 상태.
+  const [careerLevel, setCareerLevel] = useState(CAREER_LEVELS[0])
 
   const combinedScores = useMemo(() => {
     const result = emptyScores()
@@ -167,6 +172,10 @@ export function PreferenceProvider({ children }) {
       hasRegionPreference,
       setPreferredRegion,
 
+      // 경력 구분 — 마이페이지에서 직접 고름(선호 근무 지역과 같은 패턴).
+      careerLevel,
+      setCareerLevel,
+
       resetPreference,
     }),
     [
@@ -182,6 +191,7 @@ export function PreferenceProvider({ children }) {
       chatSubJobScores,
       preferredRegion,
       hasRegionPreference,
+      careerLevel,
     ]
   )
 
@@ -217,6 +227,9 @@ const noopPreference = {
   preferredRegion: ALL_REGION,
   hasRegionPreference: false,
   setPreferredRegion: () => {},
+
+  careerLevel: CAREER_LEVELS[0],
+  setCareerLevel: () => {},
 
   resetPreference: () => {},
 }
