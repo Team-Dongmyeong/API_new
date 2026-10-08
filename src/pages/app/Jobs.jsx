@@ -1,33 +1,55 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  Briefcase,
   MagnifyingGlass,
   MapPin,
   Buildings,
   CalendarBlank,
   BookmarkSimple,
   Sparkle,
+  Heart,
   Star,
   ArrowSquareOut,
 } from '@phosphor-icons/react'
-// 채용공고는 더 이상 정적 mock 파일(mocks/jobsReal.js)을 쓰지 않고, 백엔드
-// FastAPI의 /api/jobs 엔드포인트에서 가져옴 — 백엔드가 재정경제부 공공데이터
-// API를 서버 쪽에서 직접 호출/가공해주고(30분 캐시), 여기선 fetch만 하면 됨.
-// (mocks/jobsReal.js, job-fetch/fetch_jobs_to_mock.py는 더 이상 쓰지 않지만
-// 당장은 참고용으로 남겨둠 — 정리는 나중에.)
-import { fetchJobs } from '../../lib/jobsApi.js'
+// TODO(임시 연동 전환): 원래는 더미데이터(mocks/jobs.js)를 썼는데, 지금은
+// 재정경제부_공공기관 채용정보 API로 실제로 가져온 데이터(mocks/jobsReal.js)를
+// 대신 씁니다. 백엔드+DB 연동이 끝나면 이 줄을 지우고 fetch('/api/jobs')로
+// 바꾸면 됩니다. (원본 더미데이터는 mocks/jobs.js에 그대로 남아있어서 언제든
+// 아래 줄만 원래대로 되돌리면 복원 가능)
+import { REAL_JOBS as DUMMY_JOBS } from '../../mocks/jobsReal.js'
 import { usePreference } from '../../context/PreferenceContext.jsx'
-import {
-  JOB_CATEGORIES,
-  ALL_SUB_JOBS,
-  ALL_REGION,
-  REMOTE_REGION,
-  REGIONS,
-  CAREER_LEVELS,
-  NCS_GROUPS_BY_CATEGORY,
-} from '../../constants/jobCategories.js'
+import { JOB_CATEGORIES, SUB_JOBS_BY_CATEGORY } from '../../constants/jobCategories.js'
 
-// 지역/경력/카테고리 상수는 마이페이지 등 다른 화면과 공유하려고 constants/jobCategories.js로
-// 옮겼음(예전엔 이 파일에만 있었음). 동작은 그대로라 여기서 할 일은 없음.
+const ALL_REGION = '전체 지역'
+const REMOTE_REGION = '원격/재택'
+
+// 그룹 구분(특별시·광역시 / 도) 없이 17개 지역을 한 줄로 쭉 보여줌.
+// value(필터링용 짧은 표기, job.location과 대조됨)와 label(드롭다운에 보여줄 공식
+// 명칭)을 분리해뒀어요 — value를 '서울특별시'처럼 통째로 바꾸면 '서울 강남구' 같은
+// 더미 location 문자열과 안 겹쳐서 검색 결과가 0건이 되니, 화면에 보이는 이름만 label로
+// 바꿔서 씁니다.
+const REGIONS = [
+  { value: '서울', label: '서울특별시' },
+  { value: '부산', label: '부산광역시' },
+  { value: '대구', label: '대구광역시' },
+  { value: '인천', label: '인천광역시' },
+  { value: '광주', label: '광주광역시' },
+  { value: '대전', label: '대전광역시' },
+  { value: '울산', label: '울산광역시' },
+  { value: '세종', label: '세종특별자치시' },
+  { value: '경기', label: '경기도' },
+  { value: '강원', label: '강원특별자치도' },
+  { value: '충북', label: '충청북도' },
+  { value: '충남', label: '충청남도' },
+  { value: '전북', label: '전북특별자치도' },
+  { value: '전남', label: '전라남도' },
+  { value: '경북', label: '경상북도' },
+  { value: '경남', label: '경상남도' },
+  { value: '제주', label: '제주특별자치도' },
+]
+
+// 경력 수준 필터 — 대분류/세부직무와는 별개 축이라 따로 뺌.
+const CAREER_LEVELS = ['신입', '인턴']
 
 // 채용공고 리스트 전용 페이지네이션 — 스마트픽/필터 영역은 이 값과 무관하게
 // 항상 그대로 있고, 리스트 섹션만 이 크기로 잘려서 페이지가 바뀜.
@@ -42,88 +64,35 @@ function formatDday(deadline) {
   return diff === 0 ? '오늘마감' : `D-${diff}`
 }
 
-// 공공기관 채용정보 API가 실제 링크 대신 "없음"/"해당없음"/"." 같은 안내 텍스트를
-// srcUrl에 넣어서 주는 경우가 있음(예: 한전KDN 공고들 — 눌러도 안 넘어가던 원인).
-// job-fetch/fetch_jobs_to_mock.py 쪽에서 이런 값은 빈 문자열로 정리하도록
-// 고쳐뒀지만, 이미 만들어진 jobsReal.js(재실행 전)에는 여전히 남아있을 수 있어서
-// 프론트에서도 한 번 더 걸러줌 — http(s)로 시작하는 값만 "진짜 링크"로 인정.
-function isValidJobUrl(url) {
-  return typeof url === 'string' && /^https?:\/\//i.test(url.trim())
-}
-
 export default function Jobs() {
   const [keyword, setKeyword] = useState('')
   const [region, setRegion] = useState(ALL_REGION)
-  // 대분류 -> 지역 -> 경력, 3단계 필터.
-  // (예전엔 대분류 다음에 "세부직무" 단계가 하나 더 있었는데, 세부직무는 공고 제목
-  // 키워드로 "추정"한 값이라 정확도가 낮아서 뺐음 — 재정경제부 API가 공고에 직접
-  // 붙여주는 건 NCS 대분류뿐이라, 대분류 필터만 신뢰도 있게 걸러짐. 세부직무 단위
-  // 추천은 스마트픽 쪽에서만 참고용으로 계속 씀.)
+  // 대분류 -> 세부직무 -> 지역 -> 경력, 4단계로 하나씩 눌러서 좁혀가는 필터.
+  // 대분류가 바뀌면 세부직무 목록 자체가 달라지므로, 대분류를 바꾸거나 해제할 때
+  // activeSubJob도 같이 초기화함(아래 handleCategoryClick 참고).
   const [activeCategory, setActiveCategory] = useState(null)
+  const [activeSubJob, setActiveSubJob] = useState(null)
   const [careerLevel, setCareerLevel] = useState(null)
-  // 대분류 안에서 실제 NCS 코드가 2개로 나뉘는 카테고리(디자인/식·음료/MD·상품기획)에서만
-  // 쓰는 추가 필터. 공고 제목 추정이 아니라 fetch_jobs_to_mock.py가 어떤 NCS 코드로
-  // 그 공고를 수집했는지 그대로 반영한 값(job.ncsGroup)과 비교하므로 신뢰도 있음.
-  const [activeNcsGroup, setActiveNcsGroup] = useState(null)
-
-  // 채용공고 데이터 — 백엔드 /api/jobs에서 받아옴. 마운트 시 한 번만 호출하고,
-  // 백엔드가 30분 캐시를 들고 있어서 여기서 또 자주 다시 부를 필요는 없음.
-  const [jobs, setJobs] = useState([])
-  const [jobsLoading, setJobsLoading] = useState(true)
-  const [jobsError, setJobsError] = useState(null)
-
-  useEffect(() => {
-    let ignore = false
-    setJobsLoading(true)
-    setJobsError(null)
-    fetchJobs()
-      .then((data) => {
-        if (!ignore) setJobs(data)
-      })
-      .catch((err) => {
-        if (!ignore) setJobsError(err.message || '채용공고를 불러오지 못했습니다.')
-      })
-      .finally(() => {
-        if (!ignore) setJobsLoading(false)
-      })
-    return () => {
-      ignore = true
-    }
-  }, [])
 
   const handleCategoryClick = (category) => {
     const isActive = activeCategory === category
     setActiveCategory(isActive ? null : category)
-    // 대분류가 바뀌면(혹은 선택 해제되면) 이전 대분류 기준으로 골라둔 NCS 그룹은
-    // 더 이상 의미가 없으니 같이 초기화.
-    setActiveNcsGroup(null)
+    setActiveSubJob(null) // 대분류가 바뀌면 이전 대분류의 세부직무 선택은 의미가 없어짐
   }
-
-  // 마이페이지의 "공고 확인하기"(/home/jobs?job=직업명) 같은 딥링크로 들어왔을 때,
-  // 그 직업이 속한 대분류를 찾아서 위 필터를 미리 눌러놓은 상태로 만들어줌(세부직무까지는
-  // 못 좁히지만 대분류는 신뢰도 있게 좁혀짐). 첫 렌더링 때 한 번만 확인하면 되므로
-  // 의존성 배열은 비워둠.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const jobParam = params.get('job')
-    if (!jobParam) return
-    const found = ALL_SUB_JOBS.find((item) => item.subJob === jobParam)
-    if (!found) return
-    setActiveCategory(found.category)
-  }, [])
 
   const filteredJobs = useMemo(() => {
     const trimmed = keyword.trim()
-    return jobs.filter((job) => {
+    return DUMMY_JOBS.filter((job) => {
       const matchesKeyword =
         trimmed === '' || job.title.includes(trimmed) || job.company.includes(trimmed)
       const matchesRegion = region === ALL_REGION || job.location.includes(region)
       const matchesCategory = !activeCategory || job.category === activeCategory
-      const matchesNcsGroup = !activeNcsGroup || job.ncsGroup === activeNcsGroup
+      const matchesSubJob =
+        !activeSubJob || job.subJob === activeSubJob || job.subJob === '직무공통'
       const matchesCareer = !careerLevel || job.type.includes(careerLevel)
-      return matchesKeyword && matchesRegion && matchesCategory && matchesNcsGroup && matchesCareer
+      return matchesKeyword && matchesRegion && matchesCategory && matchesSubJob && matchesCareer
     })
-  }, [jobs, keyword, region, activeCategory, activeNcsGroup, careerLevel])
+  }, [keyword, region, activeCategory, activeSubJob, careerLevel])
 
   // 채용공고 리스트 페이지네이션. 필터 조건이 바뀌어서 결과가 달라지면 1페이지로
   // 되돌아감 — 그래야 필터 바꿨는데 화면엔 없는 4페이지에 머물러서 "결과 없음"처럼
@@ -131,7 +100,7 @@ export default function Jobs() {
   const [page, setPage] = useState(1)
   useEffect(() => {
     setPage(1)
-  }, [keyword, region, activeCategory, activeNcsGroup, careerLevel])
+  }, [keyword, region, activeCategory, activeSubJob, careerLevel])
 
   const totalPages = Math.max(1, Math.ceil(filteredJobs.length / JOBS_PER_PAGE))
   const pagedJobs = useMemo(
@@ -139,76 +108,21 @@ export default function Jobs() {
     [filteredJobs, page]
   )
 
-  // 페이지 번호 버튼도 10개 단위로 끊어서 보여줌(전체 페이지가 많아도 번호가
-  // 한 줄에 다 안 나오도록). 지금 보고 있는 page가 속한 묶음(1~10, 11~20, ...)만
-  // 계산해서 보여주고, "이전/다음"으로 묶음 경계를 넘어가면 자동으로 다음 묶음의
-  // 번호들로 바뀜.
-  const PAGE_GROUP_SIZE = 10
-  const pageGroupStart = Math.floor((page - 1) / PAGE_GROUP_SIZE) * PAGE_GROUP_SIZE + 1
-  const pageGroupEnd = Math.min(pageGroupStart + PAGE_GROUP_SIZE - 1, totalPages)
-  const pageNumbers = Array.from(
-    { length: pageGroupEnd - pageGroupStart + 1 },
-    (_, i) => pageGroupStart + i
-  )
+  // preferredCategory = 적성 검사 60% + 채팅 분석 40%로 계산된 "선호 추천 분야".
+  // AppLayout에 올려둔 PreferenceProvider를 앱 내 모든 화면이 같이 구독하기 때문에,
+  // 마이페이지 쪽에서 검사/채팅 결과가 반영돼 이 값이 바뀌면 이 페이지를 벗어나지
+  // 않아도(혹은 나중에 다시 들어와도) 아래 smartPickJobs가 자동으로 다시 계산됨.
+  const { preferredCategory, setTestResult } = usePreference()
 
-  // recommendedJobs = 적성 검사 70% + 채팅 분석 30%로 계산된 "추천 직업 3개"
-  // ([{ subJob, category }, ...] 세부직무 단위). AppLayout에 올려둔 PreferenceProvider를
-  // 앱 내 모든 화면이 같이 구독하기 때문에, 마이페이지 쪽에서 검사/채팅 결과가 반영돼
-  // 이 값이 바뀌면 이 페이지를 벗어나지 않아도(혹은 나중에 다시 들어와도) 아래
-  // smartPickJobs가 자동으로 다시 계산됨.
-  const {
-    recommendedJobs,
-    combinedSubJobScores,
-    testSubJobScores,
-    toggleTestSubJob,
-    // 마이페이지에서 고른 "선호 근무 지역" — 스마트픽 공고 3건을 추릴 때 이 지역과
-    // 일치하는 공고를 우선 배치하는 데 씀(ALL_REGION 기본값일 땐 미설정 취급).
-    preferredRegion,
-    hasRegionPreference,
-  } = usePreference()
-
-  // 스마트픽에서 지금 선택된 "추천 직업" 하나 — 기본값은 추천 1순위.
-  const [selectedJob, setSelectedJob] = useState(null)
-  useEffect(() => {
-    // recommendedJobs가 바뀌었는데(재진단 등) 지금 선택이 더 이상 추천 목록에 없으면
-    // 1순위로 되돌림. 최초 렌더링 때도 이 분기를 타서 selectedJob이 채워짐.
-    if (recommendedJobs.length > 0 && !recommendedJobs.some((j) => j.subJob === selectedJob)) {
-      setSelectedJob(recommendedJobs[0].subJob)
-    }
-  }, [recommendedJobs, selectedJob])
-
-  // 지금 선택된 추천 직업(selectedJob)이 속한 대분류 — "서울 + 디자인"처럼 지역과
-  // 분야를 같이 맞추려면 선호 추천 분야(대분류) 기준으로 공고 풀을 좁혀야 해서 필요.
-  const selectedCategory = recommendedJobs.find((j) => j.subJob === selectedJob)?.category
-
-  // 스마트픽 공고 3건을 고르는 순서 (우선순위 높은 순):
-  //   1순위: 세부직무까지 정확히 일치(matched)
-  //   2순위: 같은 대분류(선호 추천 분야)지만 세부직무는 다름(sameCategoryRest) — 전에는
-  //          이 2순위가 "전체 공고"였어서, 세부직무 매칭이 거의 없는 공공기관 공고
-  //          특성상 엉뚱한 대분류(예: IT/SW) 공고가 지역만 맞다고 섞여 들어오는
-  //          문제가 있었음. 대분류로 한 번 더 좁혀서 "서울 + 디자인"처럼 지역과
-  //          분야가 같이 맞는 공고만 뜨도록 고침.
-  //   3순위: 그래도 3건이 안 채워질 때만 전체 공고(globalRest)로 채움(항상 3건
-  //          보여주기 위한 최후 보루 — 보통 대분류 공고 수가 충분해서 거의 안 씀)
-  // 각 순위 묶음 안에서는 "선호 근무 지역"(마이페이지에서 설정)과 일치하는 공고를
-  // 앞쪽으로 한 번 더 정렬함 — Array.sort는 안정 정렬이라 지역 일치 여부 외의
-  // 원래 순서는 그대로 유지됨.
+  // 관심 직무와 일치하는 공고를 앞으로 정렬한 뒤 3건만 자름 — 해당 카테고리 공고가
+  // 3건 미만이어도 나머지 공고로 채워져서 항상 3건이 나오도록 함(더미가 "많아야"
+  // 하는 건 아니고, 보여주려는 카테고리에 최소 3건만 있으면 충분 — 지금 mocks/jobs.js엔
+  // 4개 직무 카테고리 전부 3건씩 있어서 어떤 걸 골라도 실제로 그 직무 공고 3개가 뜸).
   const smartPickJobs = useMemo(() => {
-    if (!selectedJob) return []
-    const isRegionMatch = (job) => hasRegionPreference && job.location.includes(preferredRegion)
-    const sortByRegion = (jobs) =>
-      hasRegionPreference
-        ? [...jobs].sort((a, b) => Number(isRegionMatch(b)) - Number(isRegionMatch(a)))
-        : jobs
-    const matched = jobs.filter((job) => job.subJob === selectedJob)
-    const sameCategoryRest = jobs.filter(
-      (job) => job.subJob !== selectedJob && job.category === selectedCategory
-    )
-    const combined = [...sortByRegion(matched), ...sortByRegion(sameCategoryRest)]
-    if (combined.length >= 3) return combined.slice(0, 3)
-    const globalRest = jobs.filter((job) => job.subJob !== selectedJob && job.category !== selectedCategory)
-    return [...combined, ...sortByRegion(globalRest)].slice(0, 3)
-  }, [jobs, selectedJob, selectedCategory, preferredRegion, hasRegionPreference])
+    const matched = DUMMY_JOBS.filter((job) => job.category === preferredCategory)
+    const rest = DUMMY_JOBS.filter((job) => job.category !== preferredCategory)
+    return [...matched, ...rest].slice(0, 3)
+  }, [preferredCategory])
 
   return (
     <div className="space-y-6">
@@ -232,6 +146,11 @@ export default function Jobs() {
             <p className="mt-3 text-body text-white/70">
               직무 키워드와 지역을 입력하면 신입·인턴 중심의 채용정보를 빠르게 검색할 수 있습니다.
             </p>
+          </div>
+          <div className="hidden h-28 w-28 shrink-0 flex-col items-center justify-center rounded-card bg-white/15 text-center text-white sm:flex">
+            <Briefcase size={28} weight="bold" aria-hidden="true" />
+            <span className="mt-1 text-h3">JOB</span>
+            <span className="text-footer text-white/60">API 테스트 연동중</span>
           </div>
         </div>
       </section>
@@ -300,28 +219,26 @@ export default function Jobs() {
           </div>
         </div>
 
-        {/* 대분류 안에서 NCS 코드가 2개로 나뉘는 경우에만 보여주는 추가 필터
-            (예: '디자인' = 문화예술디자인방송 + 섬유의복(패션디자이너)). 코드가
-            1개뿐인 대분류(IT/SW, 공공·복지)는 나눌 게 없어서 아예 안 보여줌. */}
-        {activeCategory && NCS_GROUPS_BY_CATEGORY[activeCategory]?.length > 1 && (
+        {/* 2단계: 세부직무 — 대분류를 골라야만 나타남(그 대분류 안의 세부직무 목록) */}
+        {activeCategory && (
           <div className="mt-4">
-            <span className="text-footer text-slate">{activeCategory} 세부 분류</span>
+            <span className="text-footer text-slate">세부직무</span>
             <div className="mt-2 flex flex-wrap gap-2">
-              {NCS_GROUPS_BY_CATEGORY[activeCategory].map((group) => {
-                const isActive = activeNcsGroup === group
+              {SUB_JOBS_BY_CATEGORY[activeCategory].map((sub) => {
+                const isActive = activeSubJob === sub
                 return (
                   <button
-                    key={group}
+                    key={sub}
                     type="button"
-                    onClick={() => setActiveNcsGroup(isActive ? null : group)}
+                    onClick={() => setActiveSubJob(isActive ? null : sub)}
                     aria-pressed={isActive}
-                    className={`rounded-pill border-[1.5px] px-4 py-1.5 text-nav transition-colors ${
+                    className={`rounded-pill border-[1.5px] px-3 py-1 text-footer transition-colors ${
                       isActive
-                        ? 'border-ink bg-ink text-white'
-                        : 'border-taupe bg-white text-ink hover:border-ink'
+                        ? 'border-coral bg-coral text-white'
+                        : 'border-taupe bg-white text-ink hover:border-coral'
                     }`}
                   >
-                    {group}
+                    {sub}
                   </button>
                 )
               })}
@@ -329,7 +246,7 @@ export default function Jobs() {
           </div>
         )}
 
-        {/* 2단계: 경력 (지역은 위쪽 드롭다운에서 이미 선택) */}
+        {/* 3단계: 경력 (지역은 위쪽 드롭다운에서 이미 선택) */}
         <div className="mt-4">
           <span className="text-footer text-slate">경력</span>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -355,7 +272,7 @@ export default function Jobs() {
         </div>
       </section>
 
-      {/* 스마트픽 — 추천 직업 3개(적성 검사 70% + 채팅 분석 30%) 중 고른 직업의 공고 TOP 3 */}
+      {/* 스마트픽 — 관심 직무 기반 TOP 3 추천 */}
       <section className="rounded-card bg-white p-6 shadow-1 sm:p-8">
         <div className="mb-2 flex items-center justify-between">
           <p className="flex items-center gap-2 text-nav text-ink">
@@ -363,130 +280,64 @@ export default function Jobs() {
             스마트픽
           </p>
           <span className="rounded-pill bg-coral-bg px-3 py-1 text-footer text-coral-deep">
-            추천 직업 맞춤 TOP 3
+            {preferredCategory} 맞춤 TOP 3
           </span>
         </div>
 
-        {/* 추천 직업 3개 — 버튼으로 보여주고, 클릭한 직업에 맞는 공고 3건을 아래에 표시.
-            매칭률(%)은 진단·채팅 결과가 그 세부직무에 얼마나 실렸는지를 그대로 보여줌. */}
-        <div className="mb-4 flex flex-wrap gap-2">
-          {recommendedJobs.map(({ subJob, category }) => {
-            const isActive = selectedJob === subJob
-            const rate = Math.round((combinedSubJobScores[subJob] ?? 0) * 100)
+        {/* TODO(임시 테스트용): 지금은 적성 검사·채팅 화면이 실제로 연동되기 전이라
+            여기서 칩을 눌러 setTestResult를 직접 호출해 preferredCategory를 흉내
+            내볼 수 있게 해둠. 검사/채팅 연동이 끝나면 이 칩 대신 그쪽 화면에서
+            setTestResult / setChatResult를 호출하게 되고, 여기 칩은 지워도 됨. */}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-footer text-slate">선호 추천 분야 (테스트용)</span>
+          {JOB_CATEGORIES.map((c) => {
+            const isActive = preferredCategory === c
             return (
               <button
-                key={subJob}
+                key={c}
                 type="button"
-                onClick={() => setSelectedJob(subJob)}
+                onClick={() => setTestResult(c)}
                 aria-pressed={isActive}
-                className={`rounded-pill border-[1.5px] px-4 py-1.5 text-nav transition-colors ${
+                className={`rounded-pill border-[1.5px] px-3 py-1 text-footer transition-colors ${
                   isActive
                     ? 'border-coral bg-coral text-white'
                     : 'border-taupe bg-white text-ink hover:border-coral'
                 }`}
               >
-                {subJob}
-                <span className={`ml-1.5 text-footer ${isActive ? 'text-white/70' : 'text-taupe'}`}>
-                  {category}
-                </span>
-                {rate > 0 && (
-                  <span
-                    className={`ml-1.5 text-footer font-semibold ${isActive ? 'text-white' : 'text-coral'}`}
-                  >
-                    {rate}%
-                  </span>
-                )}
+                {c}
               </button>
             )
           })}
         </div>
 
-        {/* (개발용) 수동 테스트 — 적성 검사·채팅 화면이 실제로 연동되기 전이라 여기서
-            칩을 눌러 toggleTestSubJob을 직접 호출해 recommendedJobs(추천 직업 3개)를
-            흉내 내볼 수 있게 해둠. 평소엔 접혀 있어서 실제 화면처럼 보이고, 필요할 때만
-            펼쳐서 씀. 검사/채팅 연동이 끝나면 이 블록은 통째로 지워도 됨. */}
-        <details className="mb-4 rounded-btn bg-canvas-lift p-3 text-footer text-ink-soft open:pb-3">
-          <summary className="cursor-pointer select-none font-semibold text-slate">
-            🛠 (개발용) 수동 테스트 — 세부직무를 눌러서 추천 3개 흉내내보기
-          </summary>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {ALL_SUB_JOBS.map(({ subJob }) => {
-              const isActive = testSubJobScores[subJob] > 0
-              return (
-                <button
-                  key={subJob}
-                  type="button"
-                  onClick={() => toggleTestSubJob(subJob)}
-                  aria-pressed={isActive}
-                  className={`rounded-pill border px-2.5 py-1 text-footer transition-colors ${
-                    isActive
-                      ? 'border-coral bg-coral text-white'
-                      : 'border-taupe bg-white text-ink-soft hover:border-coral'
-                  }`}
-                >
-                  {subJob}
-                </button>
-              )
-            })}
-          </div>
-        </details>
-
         <div className="divide-y divide-canvas-lift">
-          {smartPickJobs.map((job) => {
-            const isMatched = job.subJob === selectedJob
-            const isRegionMatch = hasRegionPreference && job.location.includes(preferredRegion)
-            // URL이 있으면 카드 전체를 새 탭 링크로, 없으면 그냥 div로 — Jobs.jsx
-            // 아래쪽 채용공고 리스트처럼 클릭하면 바로 실제 공고 페이지로 이동함.
-            const hasValidUrl = isValidJobUrl(job.url)
-            const CardTag = hasValidUrl ? 'a' : 'div'
-            return (
-              <CardTag
-                key={job.id}
-                {...(hasValidUrl ? { href: job.url, target: '_blank', rel: 'noopener noreferrer' } : {})}
-                className={`-mx-2 flex items-center gap-4 rounded-btn px-2 py-4 transition-colors first:pt-4 last:pb-4 ${
-                  hasValidUrl ? 'cursor-pointer hover:bg-canvas-lift' : ''
-                }`}
+          {smartPickJobs.map((job) => (
+            <div key={job.id} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
+              <div
+                className="flex h-14 w-14 shrink-0 items-center justify-center rounded-btn bg-canvas-lift text-nav text-ink-soft"
+                aria-hidden="true"
               >
-                <div
-                  className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-btn text-nav ${
-                    isMatched ? 'bg-coral-bg text-coral-deep' : 'bg-canvas-lift text-ink-soft'
-                  }`}
-                  aria-hidden="true"
-                >
-                  {job.company.replace(/[()]/g, '').slice(0, 2)}
-                </div>
+                {job.company.replace(/[()]/g, '').slice(0, 2)}
+              </div>
 
-                <div className="min-w-0 flex-1">
-                  <p className="flex flex-wrap items-center gap-1.5 text-footer text-slate">
-                    {job.company}
-                    {isMatched ? (
-                      <span className="inline-flex items-center gap-0.5 rounded-pill bg-coral-bg px-2 py-0.5 text-[11px] font-semibold text-coral-deep">
-                        <Star size={10} weight="fill" aria-hidden="true" />
-                        {job.subJob} 매칭
-                      </span>
-                    ) : (
-                      <span className="rounded-pill bg-canvas px-2 py-0.5 text-[11px] text-taupe">관련 공고</span>
-                    )}
-                    {isRegionMatch && (
-                      <span className="inline-flex items-center gap-0.5 rounded-pill bg-ink/5 px-2 py-0.5 text-[11px] font-semibold text-ink">
-                        <MapPin size={10} weight="fill" aria-hidden="true" />
-                        선호 지역
-                      </span>
-                    )}
-                  </p>
-                  <p className="mt-0.5 truncate text-body text-ink">{job.title}</p>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-footer text-slate">
-                    <span>{job.type}</span>
-                    <span className={isRegionMatch ? 'font-semibold text-coral-deep' : undefined}>
-                      {job.location}
-                    </span>
-                  </div>
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-1 text-footer text-slate">
+                  {job.company}
+                  <Heart size={12} className="text-taupe" aria-hidden="true" />
+                </p>
+                <p className="mt-0.5 flex items-center gap-1 truncate text-body text-ink">
+                  {job.title}
+                  <Star size={12} className="shrink-0 text-taupe" aria-hidden="true" />
+                </p>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-footer text-slate">
+                  <span>{job.type}</span>
+                  <span>{job.location}</span>
                 </div>
+              </div>
 
-                <span className="shrink-0 text-footer text-taupe">{formatDday(job.deadline)}</span>
-              </CardTag>
-            )
-          })}
+              <span className="shrink-0 text-footer text-taupe">{formatDday(job.deadline)}</span>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -495,19 +346,12 @@ export default function Jobs() {
         <div className="mb-3 flex items-center justify-between">
           <p className="eyebrow-label">
             <span className="h-1.5 w-1.5 rounded-full bg-coral" aria-hidden="true" />
-            {jobsLoading ? '채용공고 불러오는 중…' : `채용공고 ${filteredJobs.length}건`}
+            채용공고 {filteredJobs.length}건
           </p>
+          <p className="text-footer text-taupe">* 공공기관 채용정보 API 실제 데이터 (테스트 연동)</p>
         </div>
 
-        {jobsError ? (
-          <div className="rounded-card bg-white p-10 text-center shadow-1">
-            <p className="text-body text-slate">채용공고를 불러오지 못했어요. ({jobsError})</p>
-          </div>
-        ) : jobsLoading ? (
-          <div className="rounded-card bg-white p-10 text-center shadow-1">
-            <p className="text-body text-slate">채용공고를 불러오는 중이에요…</p>
-          </div>
-        ) : filteredJobs.length === 0 ? (
+        {filteredJobs.length === 0 ? (
           <div className="rounded-card bg-white p-10 text-center shadow-1">
             <p className="text-body text-slate">조건에 맞는 공고가 없어요. 키워드나 지역을 바꿔보세요.</p>
           </div>
@@ -516,7 +360,20 @@ export default function Jobs() {
             {pagedJobs.map((job) => (
               <article
                 key={job.id}
-                className="rounded-card bg-white p-6 shadow-1 transition-transform duration-150 hover:-translate-y-0.5 sm:p-8"
+                role={job.url ? 'link' : undefined}
+                tabIndex={job.url ? 0 : undefined}
+                onClick={() => {
+                  if (job.url) window.open(job.url, '_blank', 'noopener,noreferrer')
+                }}
+                onKeyDown={(e) => {
+                  if (job.url && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault()
+                    window.open(job.url, '_blank', 'noopener,noreferrer')
+                  }
+                }}
+                className={`rounded-card bg-white p-6 shadow-1 transition-transform duration-150 hover:-translate-y-0.5 sm:p-8 ${
+                  job.url ? 'cursor-pointer' : ''
+                }`}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -524,18 +381,14 @@ export default function Jobs() {
                       <Buildings size={14} aria-hidden="true" />
                       {job.company}
                     </p>
-                    <h2 className="mt-1 text-h3 text-ink">
-                      {isValidJobUrl(job.url) ? (
-                        <a
-                          href={job.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="hover:underline"
-                        >
-                          {job.title}
-                        </a>
-                      ) : (
-                        job.title
+                    <h2 className="mt-1 flex items-center gap-1.5 text-h3 text-ink">
+                      {job.title}
+                      {job.url && (
+                        <ArrowSquareOut
+                          size={16}
+                          className="shrink-0 text-taupe"
+                          aria-hidden="true"
+                        />
                       )}
                     </h2>
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-footer text-slate">
@@ -552,6 +405,7 @@ export default function Jobs() {
                   <button
                     type="button"
                     aria-label="공고 저장"
+                    onClick={(e) => e.stopPropagation()}
                     className="shrink-0 rounded-full p-2 text-taupe transition-colors hover:bg-canvas-lift hover:text-ink"
                   >
                     <BookmarkSimple size={20} aria-hidden="true" />
@@ -571,16 +425,11 @@ export default function Jobs() {
                     </span>
                   ))}
 
-                  {isValidJobUrl(job.url) && (
-                    <a
-                      href={job.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-auto flex items-center gap-1 text-footer font-medium text-coral hover:underline"
-                    >
+                  {job.url && (
+                    <span className="ml-auto flex items-center gap-1 text-footer font-medium text-coral">
                       지원하러 가기
                       <ArrowSquareOut size={14} aria-hidden="true" />
-                    </a>
+                    </span>
                   )}
                 </div>
               </article>
@@ -592,16 +441,6 @@ export default function Jobs() {
             그대로 있고 이 카드 목록만 페이지가 바뀜. */}
         {totalPages > 1 && (
           <div className="mt-6 flex items-center justify-center gap-2">
-            {/* 묶음(10페이지) 단위로 한 번에 앞으로/뒤로 이동 — 번호 묶음이 많을 때만 노출 */}
-            {pageGroupStart > 1 && (
-              <button
-                type="button"
-                onClick={() => setPage(pageGroupStart - 1)}
-                className="rounded-btn border-[1.5px] border-taupe px-3 py-1.5 text-nav text-ink transition-colors hover:border-ink"
-              >
-                «
-              </button>
-            )}
             <button
               type="button"
               onClick={() => setPage((p) => Math.max(1, p - 1))}
@@ -610,7 +449,7 @@ export default function Jobs() {
             >
               이전
             </button>
-            {pageNumbers.map((p) => (
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
               <button
                 key={p}
                 type="button"
@@ -633,17 +472,16 @@ export default function Jobs() {
             >
               다음
             </button>
-            {pageGroupEnd < totalPages && (
-              <button
-                type="button"
-                onClick={() => setPage(pageGroupEnd + 1)}
-                className="rounded-btn border-[1.5px] border-taupe px-3 py-1.5 text-nav text-ink transition-colors hover:border-ink"
-              >
-                »
-              </button>
-            )}
           </div>
         )}
+      </section>
+
+      {/* API 연동 안내 */}
+      <section className="rounded-card bg-canvas-lift p-6 text-center shadow-1 sm:p-8">
+        <p className="text-body text-slate">
+          공공기관 채용정보 API(재정경제부)를 테스트 연동해 위 목록을 실제 공고로 채우고 있어요. 원티드 등 민간
+          채용공고 API가 승인되면 함께 합쳐질 예정입니다.
+        </p>
       </section>
     </div>
   )
