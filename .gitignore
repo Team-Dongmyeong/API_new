@@ -8,3 +8,8 @@ dist
 .env.*
 !.env.example
 api.env
+
+# 채용공고/NCS 데이터 수집용 공공데이터 서비스키 (secrets — never commit)
+ncs-fetch/service_key.txt
+job-fetch/service_key.txt
+job-fetch/worknet_service_key.txt
