@@ -9,12 +9,12 @@ import {
   Star,
   ArrowSquareOut,
 } from '@phosphor-icons/react'
-// TODO(임시 연동 전환): 원래는 더미데이터(mocks/jobs.js)를 썼는데, 지금은
-// 재정경제부_공공기관 채용정보 API로 실제로 가져온 데이터(mocks/jobsReal.js)를
-// 대신 씁니다. 백엔드+DB 연동이 끝나면 이 줄을 지우고 fetch('/api/jobs')로
-// 바꾸면 됩니다. (원본 더미데이터는 mocks/jobs.js에 그대로 남아있어서 언제든
-// 아래 줄만 원래대로 되돌리면 복원 가능)
-import { REAL_JOBS as DUMMY_JOBS } from '../../mocks/jobsReal.js'
+// 채용공고는 더 이상 정적 mock 파일(mocks/jobsReal.js)을 쓰지 않고, 백엔드
+// FastAPI의 /api/jobs 엔드포인트에서 가져옴 — 백엔드가 재정경제부 공공데이터
+// API를 서버 쪽에서 직접 호출/가공해주고(30분 캐시), 여기선 fetch만 하면 됨.
+// (mocks/jobsReal.js, job-fetch/fetch_jobs_to_mock.py는 더 이상 쓰지 않지만
+// 당장은 참고용으로 남겨둠 — 정리는 나중에.)
+import { fetchJobs } from '../../lib/jobsApi.js'
 import { usePreference } from '../../context/PreferenceContext.jsx'
 import {
   JOB_CATEGORIES,
@@ -66,6 +66,31 @@ export default function Jobs() {
   // 그 공고를 수집했는지 그대로 반영한 값(job.ncsGroup)과 비교하므로 신뢰도 있음.
   const [activeNcsGroup, setActiveNcsGroup] = useState(null)
 
+  // 채용공고 데이터 — 백엔드 /api/jobs에서 받아옴. 마운트 시 한 번만 호출하고,
+  // 백엔드가 30분 캐시를 들고 있어서 여기서 또 자주 다시 부를 필요는 없음.
+  const [jobs, setJobs] = useState([])
+  const [jobsLoading, setJobsLoading] = useState(true)
+  const [jobsError, setJobsError] = useState(null)
+
+  useEffect(() => {
+    let ignore = false
+    setJobsLoading(true)
+    setJobsError(null)
+    fetchJobs()
+      .then((data) => {
+        if (!ignore) setJobs(data)
+      })
+      .catch((err) => {
+        if (!ignore) setJobsError(err.message || '채용공고를 불러오지 못했습니다.')
+      })
+      .finally(() => {
+        if (!ignore) setJobsLoading(false)
+      })
+    return () => {
+      ignore = true
+    }
+  }, [])
+
   const handleCategoryClick = (category) => {
     const isActive = activeCategory === category
     setActiveCategory(isActive ? null : category)
@@ -89,7 +114,7 @@ export default function Jobs() {
 
   const filteredJobs = useMemo(() => {
     const trimmed = keyword.trim()
-    return DUMMY_JOBS.filter((job) => {
+    return jobs.filter((job) => {
       const matchesKeyword =
         trimmed === '' || job.title.includes(trimmed) || job.company.includes(trimmed)
       const matchesRegion = region === ALL_REGION || job.location.includes(region)
@@ -98,7 +123,7 @@ export default function Jobs() {
       const matchesCareer = !careerLevel || job.type.includes(careerLevel)
       return matchesKeyword && matchesRegion && matchesCategory && matchesNcsGroup && matchesCareer
     })
-  }, [keyword, region, activeCategory, activeNcsGroup, careerLevel])
+  }, [jobs, keyword, region, activeCategory, activeNcsGroup, careerLevel])
 
   // 채용공고 리스트 페이지네이션. 필터 조건이 바뀌어서 결과가 달라지면 1페이지로
   // 되돌아감 — 그래야 필터 바꿨는데 화면엔 없는 4페이지에 머물러서 "결과 없음"처럼
@@ -175,15 +200,15 @@ export default function Jobs() {
       hasRegionPreference
         ? [...jobs].sort((a, b) => Number(isRegionMatch(b)) - Number(isRegionMatch(a)))
         : jobs
-    const matched = DUMMY_JOBS.filter((job) => job.subJob === selectedJob)
-    const sameCategoryRest = DUMMY_JOBS.filter(
+    const matched = jobs.filter((job) => job.subJob === selectedJob)
+    const sameCategoryRest = jobs.filter(
       (job) => job.subJob !== selectedJob && job.category === selectedCategory
     )
     const combined = [...sortByRegion(matched), ...sortByRegion(sameCategoryRest)]
     if (combined.length >= 3) return combined.slice(0, 3)
-    const globalRest = DUMMY_JOBS.filter((job) => job.subJob !== selectedJob && job.category !== selectedCategory)
+    const globalRest = jobs.filter((job) => job.subJob !== selectedJob && job.category !== selectedCategory)
     return [...combined, ...sortByRegion(globalRest)].slice(0, 3)
-  }, [selectedJob, selectedCategory, preferredRegion, hasRegionPreference])
+  }, [jobs, selectedJob, selectedCategory, preferredRegion, hasRegionPreference])
 
   return (
     <div className="space-y-6">
@@ -470,11 +495,19 @@ export default function Jobs() {
         <div className="mb-3 flex items-center justify-between">
           <p className="eyebrow-label">
             <span className="h-1.5 w-1.5 rounded-full bg-coral" aria-hidden="true" />
-            채용공고 {filteredJobs.length}건
+            {jobsLoading ? '채용공고 불러오는 중…' : `채용공고 ${filteredJobs.length}건`}
           </p>
         </div>
 
-        {filteredJobs.length === 0 ? (
+        {jobsError ? (
+          <div className="rounded-card bg-white p-10 text-center shadow-1">
+            <p className="text-body text-slate">채용공고를 불러오지 못했어요. ({jobsError})</p>
+          </div>
+        ) : jobsLoading ? (
+          <div className="rounded-card bg-white p-10 text-center shadow-1">
+            <p className="text-body text-slate">채용공고를 불러오는 중이에요…</p>
+          </div>
+        ) : filteredJobs.length === 0 ? (
           <div className="rounded-card bg-white p-10 text-center shadow-1">
             <p className="text-body text-slate">조건에 맞는 공고가 없어요. 키워드나 지역을 바꿔보세요.</p>
           </div>
