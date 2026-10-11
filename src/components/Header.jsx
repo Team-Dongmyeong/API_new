@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { ChatCircleDots, Heartbeat, PuzzlePiece, Briefcase, Sparkle, SignOut } from '@phosphor-icons/react'
 import { useAuth } from '../context/AuthContext.jsx'
-import { usePreference } from '../context/PreferenceContext.jsx'
 import PreferenceQuiz from './PreferenceQuiz.jsx'
 
 // 메인 메뉴 (로그아웃 상태) — 마음잇기의 네 가지 축(대화 / 감정 케어 / 직무 매칭
@@ -41,14 +40,10 @@ export default function Header() {
   const { user, isAuthenticated, logout } = useAuth()
   const navigate = useNavigate()
 
-  // 로그인 후 "진단하기" 박스 + 중앙 모달. usePreference()는 PreferenceProvider가
-  // 없는 화면(로그인 전 랜딩)에서도 안전한 기본값을 돌려주게 되어있어서, Header가
-  // 로그인/비로그인 양쪽에서 렌더링돼도 여기서 훅을 그냥 호출해도 문제없음 —
-  // 다만 박스 자체는 isAuthenticated일 때만 보여줌(로그인 전엔 선택한 선호 분야가 없음).
-  // (2026-10-11 변경) preferredCategory는 더 이상 이 퀴즈가 갱신하지 않음 — 마이페이지
-  // "내 정보 수정하기"에서 사용자가 직접 고르는 값으로 바뀌었고, 이 버튼은 그 값을
-  // 그대로 보여주기만 함(미설정이면 "진단하기" 문구).
-  const { preferredCategory, hasPreferenceData } = usePreference()
+  // 로그인 후 "진단하기" 박스 + 중앙 모달. 그냥 간단 진단 퀴즈를 여는 버튼일
+  // 뿐이고, 선호 추천 분야 값과는 더 이상 연결되지 않음 — 퀴즈를 몇 번을
+  // 돌리든, 결과가 무엇이든 버튼 문구는 항상 "진단하기"로 고정. 선호 추천
+  // 분야는 마이페이지 "내 정보 수정하기"에서만 바뀜(PreferenceContext.jsx 참고).
   const [quizOpen, setQuizOpen] = useState(false)
 
   // 모달이 열려있을 때 Esc로도 닫히게. 배경(딤 처리된 부분) 클릭으로도 닫을 수 있음.
@@ -160,16 +155,15 @@ export default function Header() {
           <div className="ml-auto flex shrink-0 items-center gap-3">
             {/* "진단하기" 박스 — 홈/채팅/채용공고/마이페이지 등 어느 화면에 있든
                 최상단 헤더에 항상 떠 있는 위치. 눌러서 5문항 간단 진단을 마치면
-                결과(1~3순위 분야)만 보여주고, 선호 추천 분야 자체는 더 이상 여기서
-                바뀌지 않음 — 마이페이지 "내 정보 수정하기"에서 직접 고른 값을
-                그대로 보여주기만 함(미설정이면 "진단하기" 문구). */}
+                결과(1~3순위 분야)만 그 자리에서 보여주고 끝 — 선호 추천 분야를
+                바꾸지 않으니 이 버튼 문구도 항상 "진단하기"로 고정. */}
             <button
               type="button"
               onClick={() => setQuizOpen(true)}
               className="inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-pill bg-coral-bg px-3.5 py-2 text-[13px] font-semibold text-coral-deep transition-transform duration-150 ease-out hover:-translate-y-0.5 active:translate-y-0"
             >
               <Sparkle size={14} weight="fill" aria-hidden="true" />
-              {hasPreferenceData ? preferredCategory : '진단하기'}
+              진단하기
             </button>
 
             {user?.name && <span className="hidden text-[13px] text-slate sm:inline">{user.name}님</span>}

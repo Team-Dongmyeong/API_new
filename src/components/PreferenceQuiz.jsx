@@ -171,7 +171,7 @@ export default function PreferenceQuiz({ onCancel }) {
             <p className="text-[14px] font-bold text-coral-deep">당신의 추천 직무는 {top1}입니다.</p>
             {top1SubJobs.length > 0 && (
               <p className="mt-2 text-[13px] leading-relaxed text-ink">
-                {top1} 직무에는 어떤 게 있습니다. {top1SubJobs.join(', ')}
+                {top1} 직무에는 {top1SubJobs.join(', ')}가 있습니다.
               </p>
             )}
           </div>
