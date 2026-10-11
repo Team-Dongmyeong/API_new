@@ -44,17 +44,12 @@ export default function Header() {
   // 로그인 후 "진단하기" 박스 + 중앙 모달. usePreference()는 PreferenceProvider가
   // 없는 화면(로그인 전 랜딩)에서도 안전한 기본값을 돌려주게 되어있어서, Header가
   // 로그인/비로그인 양쪽에서 렌더링돼도 여기서 훅을 그냥 호출해도 문제없음 —
-  // 다만 박스 자체는 isAuthenticated일 때만 보여줌(로그인 전엔 진단할 결과가 없음).
-  const { preferredCategory, hasPreferenceData, setTestResult, setTestSubJobResult } = usePreference()
+  // 다만 박스 자체는 isAuthenticated일 때만 보여줌(로그인 전엔 선택한 선호 분야가 없음).
+  // (2026-10-11 변경) preferredCategory는 더 이상 이 퀴즈가 갱신하지 않음 — 마이페이지
+  // "내 정보 수정하기"에서 사용자가 직접 고르는 값으로 바뀌었고, 이 버튼은 그 값을
+  // 그대로 보여주기만 함(미설정이면 "진단하기" 문구).
+  const { preferredCategory, hasPreferenceData } = usePreference()
   const [quizOpen, setQuizOpen] = useState(false)
-
-  // 대분류 벡터는 "선호 추천 분야"(preferredCategory)로, 세부직무 벡터는 채용공고
-  // 스마트픽의 "추천 직업 3개"(recommendedJobs)로 — 진단 퀴즈 하나로 둘 다 갱신됨.
-  function handleQuizSubmit(categoryVector, subJobVector) {
-    setTestResult(categoryVector)
-    setTestSubJobResult(subJobVector)
-    setQuizOpen(false)
-  }
 
   // 모달이 열려있을 때 Esc로도 닫히게. 배경(딤 처리된 부분) 클릭으로도 닫을 수 있음.
   useEffect(() => {
@@ -165,8 +160,9 @@ export default function Header() {
           <div className="ml-auto flex shrink-0 items-center gap-3">
             {/* "진단하기" 박스 — 홈/채팅/채용공고/마이페이지 등 어느 화면에 있든
                 최상단 헤더에 항상 떠 있는 위치. 눌러서 5문항 간단 진단을 마치면
-                선호 추천 분야(검사 60% 반영분)가 여기서 바로 갱신되고, 이 값을
-                구독하는 채용공고 스마트픽/마이페이지가 실시간으로 같이 바뀜. */}
+                결과(1~3순위 분야)만 보여주고, 선호 추천 분야 자체는 더 이상 여기서
+                바뀌지 않음 — 마이페이지 "내 정보 수정하기"에서 직접 고른 값을
+                그대로 보여주기만 함(미설정이면 "진단하기" 문구). */}
             <button
               type="button"
               onClick={() => setQuizOpen(true)}
@@ -198,7 +194,8 @@ export default function Header() {
 
       {/* 간단 진단 테스트 — 화면 중앙에 뜨는 모달. 배경(딤 처리된 부분)을 클릭하거나
           Esc를 누르면 닫힘. 헤더가 모든 로그인 후 화면에 공통으로 떠 있으니, 어느
-          페이지에서 열어도 동일하게 동작함. */}
+          페이지에서 열어도 동일하게 동작함. (2026-10-11 변경) 결과를 반영하는
+          onSubmit은 더 이상 없음 — PreferenceQuiz가 결과를 자체적으로 보여주기만 함. */}
       {isAuthenticated && quizOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -208,7 +205,7 @@ export default function Header() {
         >
           <div className="absolute inset-0 bg-ink/50" onClick={() => setQuizOpen(false)} aria-hidden="true" />
           <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto animate-fade-up">
-            <PreferenceQuiz onSubmit={handleQuizSubmit} onCancel={() => setQuizOpen(false)} />
+            <PreferenceQuiz onCancel={() => setQuizOpen(false)} />
           </div>
         </div>
       )}
