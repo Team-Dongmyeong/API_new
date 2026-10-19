@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Plus, PaperPlaneTilt, SidebarSimple, X } from '@phosphor-icons/react'
 import { sendChatMessage } from '../../lib/chatApi.js'
+import { CHAT_SESSIONS_STORAGE_KEY, createSession, loadSessions } from '../../lib/chatSessions.js'
 
 // 세션(대화방) 여러 개를 나눠 관리하는 채팅 화면 — 지난번 디자인 캔버스에서 정한
 // "Claude/Gemini처럼 세션을 나누고, 왼쪽에 열고 닫을 수 있는 목록"을 실제 컴포넌트로
@@ -18,38 +20,24 @@ import { sendChatMessage } from '../../lib/chatApi.js'
 // localStorage로 저장됨 — 새로고침해도 유지되지만, 다른 기기·다른 브라우저와는
 // 공유되지 않음.
 
-const STORAGE_KEY = 'maeum:chat-sessions'
-
-function createSession() {
-  return {
-    id: crypto.randomUUID(), // 프론트 로컬 키. 백엔드 session_id는 첫 응답 이후 별도로 저장.
-    backendSessionId: null,
-    title: '새 대화',
-    createdAt: Date.now(),
-    messages: [], // { role: 'user' | 'bot', text, time }
-  }
-}
-
 function isToday(timestamp) {
   const d = new Date(timestamp)
   const now = new Date()
   return d.toDateString() === now.toDateString()
 }
 
-function loadInitialSessions() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    const parsed = raw ? JSON.parse(raw) : null
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed
-  } catch {
-    // 저장된 값이 깨져 있으면 그냥 새로 시작
-  }
-  return [createSession()]
-}
-
 export default function Chat() {
-  const [sessions, setSessions] = useState(loadInitialSessions)
-  const [activeId, setActiveId] = useState(() => loadInitialSessions()[0]?.id)
+  // 마이페이지 > 채팅로그 > "대화 보기"에서 /home/chat?session=<id>로 넘어온 경우,
+  // 해당 세션을 바로 열어서 보여줌. 없거나 존재하지 않는 id면 기존처럼 가장 최근
+  // 세션(목록 맨 앞)을 보여줌.
+  const [searchParams] = useSearchParams()
+  const [sessions, setSessions] = useState(loadSessions)
+  const [activeId, setActiveId] = useState(() => {
+    const requestedId = searchParams.get('session')
+    const initialSessions = loadSessions()
+    if (requestedId && initialSessions.some((s) => s.id === requestedId)) return requestedId
+    return initialSessions[0]?.id
+  })
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 768)
@@ -58,7 +46,7 @@ export default function Chat() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions))
+      localStorage.setItem(CHAT_SESSIONS_STORAGE_KEY, JSON.stringify(sessions))
     } catch {
       // 저장 실패해도(용량 초과 등) 대화 자체는 계속 진행
     }
@@ -67,6 +55,16 @@ export default function Chat() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [sessions, activeId])
+
+  // Chat 화면이 이미 열려 있는 상태에서 다른 session 쿼리로 다시 이동해온 경우
+  // (예: 마이페이지에서 다른 대화의 "대화 보기"를 또 눌렀을 때)에도 대응.
+  useEffect(() => {
+    const requestedId = searchParams.get('session')
+    if (requestedId && sessions.some((s) => s.id === requestedId)) {
+      setActiveId(requestedId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const activeSession = sessions.find((s) => s.id === activeId) ?? sessions[0]
 

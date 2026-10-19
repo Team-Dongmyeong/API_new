@@ -4,6 +4,7 @@ import { Heartbeat, ChatCircleDots, Briefcase, UserCircle, Megaphone, Compass } 
 import { useAuth } from '../../context/AuthContext.jsx'
 import { usePreference } from '../../context/PreferenceContext.jsx'
 import { JOB_CATEGORIES, ALL_REGION, REMOTE_REGION, REGIONS, CAREER_LEVELS } from '../../constants/jobCategories.js'
+import { loadSessions } from '../../lib/chatSessions.js'
 
 // 전부 더미 데이터 — 백엔드(kcELECTRA/SBERT/RAG) 연동 전 화면 확인용.
 const EMOTION_PATTERN = [
@@ -33,11 +34,14 @@ const PERIOD_DATA = {
   },
 }
 
-const CHAT_LOG = [
-  { tag: '심리 상담', title: '자존감 케어 및 학업 스트레스 상담 세션', meta: '2026.09.07 · 감정 상태: 안정' },
-  { tag: '직업 추천', title: 'SBERT 기반 백엔드/AI 직무 적성 매칭 상담', meta: '2026.09.05 · 키워드 매칭 완료' },
-  { tag: '심리 상담', title: '일상적 무기력감 극복을 위한 행동 진단', meta: '2026.09.01 · 감정 상태: 피로감 관찰' },
-]
+// 날짜 표기를 Chat.jsx 세션 데이터(createdAt, timestamp)에 맞춰 'YYYY.MM.DD' 형식으로.
+function formatSessionDate(timestamp) {
+  const d = new Date(timestamp)
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}.${mm}.${dd}`
+}
 
 // 개인정보를 맨 앞으로 — 마이페이지에 들어오면 이 탭이 먼저 보이도록.
 const tabs = [
@@ -234,6 +238,14 @@ export default function MyPage() {
   // 값(ALL_REGION/REMOTE_REGION)은 그 문자열 자체가 이미 표시용 라벨이라 그대로 씀.
   const preferredRegionLabel = REGIONS.find((item) => item.value === preferredRegion)?.label ?? preferredRegion
 
+  // 채팅로그 탭 — Chat.jsx와 같은 localStorage(maeum:chat-sessions)를 그대로 읽어옴.
+  // 아직 채팅 내역을 DB에 저장하지 않고 브라우저에만 저장하는 단계라, 여기서도
+  // 백엔드 호출 없이 Chat.jsx가 쓰는 것과 동일한 데이터를 바로 보여줄 수 있음.
+  // 메시지가 하나도 없는 "새 대화"(빈 세션)는 실제로 나눈 대화가 아니므로 목록에서 제외.
+  const chatSessions = loadSessions()
+    .filter((session) => session.messages.length > 0)
+    .sort((a, b) => b.createdAt - a.createdAt)
+
   function handleProfileSubmit(event) {
     event.preventDefault()
     setProfileSaved(true)
@@ -322,28 +334,31 @@ export default function MyPage() {
 
         {activeTab === 'chatlog' && (
           <div className="space-y-3">
-            {CHAT_LOG.map((log) => (
-              <div
-                key={log.title}
-                className="flex flex-col gap-3 rounded-card bg-white p-5 shadow-1 sm:flex-row sm:items-center sm:justify-between sm:p-6"
-              >
-                <div>
-                  <span className="inline-flex rounded-pill bg-coral-bg px-3 py-1 text-[12px] font-bold text-coral-deep">
-                    {log.tag}
-                  </span>
-                  <p className="mt-2 font-semibold text-ink">{log.title}</p>
-                  <p className="mt-1 text-[13px] text-slate">{log.meta}</p>
-                </div>
-                <button
-                  type="button"
-                  disabled
-                  title="백엔드 연동 후 이용할 수 있어요"
-                  className="btn-secondary shrink-0 opacity-50"
-                >
-                  대화 보기
-                </button>
+            {chatSessions.length === 0 ? (
+              <div className="rounded-card bg-white p-10 text-center shadow-1">
+                <p className="text-body text-slate">아직 나눈 대화가 없어요. 대화를 시작하면 여기에서 다시 확인할 수 있어요.</p>
+                <Link to="/home/chat" className="btn-accent mt-5 inline-flex">
+                  대화 시작하기
+                </Link>
               </div>
-            ))}
+            ) : (
+              chatSessions.map((session) => (
+                <div
+                  key={session.id}
+                  className="flex flex-col gap-3 rounded-card bg-white p-5 shadow-1 sm:flex-row sm:items-center sm:justify-between sm:p-6"
+                >
+                  <div>
+                    <p className="font-semibold text-ink">{session.title}</p>
+                    <p className="mt-1 text-[13px] text-slate">
+                      {formatSessionDate(session.createdAt)} · 메시지 {session.messages.length}개
+                    </p>
+                  </div>
+                  <Link to={`/home/chat?session=${session.id}`} className="btn-secondary shrink-0">
+                    대화 보기
+                  </Link>
+                </div>
+              ))
+            )}
           </div>
         )}
 
