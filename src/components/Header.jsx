@@ -6,7 +6,7 @@ import PreferenceQuiz from './PreferenceQuiz.jsx'
 
 // 메인 메뉴 (로그아웃 상태) — 로그인 상태와 동일한 스타일의 상단 바를 그대로
 // 쓰되, 계정 없이도 바로 이용 가능한 항목(홈/공지사항/이용가이드/FAQ)만 노출.
-// 채팅·채용공고·마이페이지는 로그인이 필요한 기능이라 제외.
+// 채팅·채용공고·청년정책·마이페이지는 로그인이 필요한 기능이라 제외.
 const publicNavItems = [
   { label: '홈', to: '/', end: true },
   { label: '공지사항', to: '/notice' },
@@ -19,16 +19,15 @@ const appNavItems = [
   { label: '홈', to: '/home', end: true },
   { label: '채팅', to: '/home/chat' },
   { label: '채용공고', to: '/home/jobs' },
+  { label: '청년정책', to: '/home/policies' },
   { label: '공지사항', to: '/home/notice' },
   { label: '이용가이드', to: '/home/guide' },
   { label: 'FAQ', to: '/home/faq' },
   { label: '마이페이지', to: '/home/mypage' },
 ]
 
-// 로그인 전/후 화면에서 공유하는 헤더. 팀원들이 만든 화면들처럼 로고와
-// 로그인/로그아웃 사이에 메뉴를 한 줄로 압축했어 — 실제 콘텐츠는 팀원들이
-// 채워나가는 영역이라, 이쪽은 "틀"이 되는 내비게이션 크기/여백/색상 규칙을
-// 최대한 정리하는 데 집중.
+// 로그인 전/후 화면에서 공유하는 헤더. 로그인 여부와 상관없이 동일한 스타일의
+// 상단 바를 쓰고, 항목 목록만 로그인 상태에 따라 바뀜(publicNavItems / appNavItems).
 export default function Header() {
   const { user, isAuthenticated, logout } = useAuth()
   const navigate = useNavigate()
@@ -65,8 +64,7 @@ export default function Header() {
           maeum
         </Link>
 
-        {/* 메인 메뉴 — 로고와 로그인/로그아웃 사이, 한 줄로 압축. 로그인 여부와
-            상관없이 동일한 스타일의 바를 쓰고, 항목 목록만 바뀜. */}
+        {/* 메인 메뉴 — 로그인 여부와 상관없이 항상 표시, 항목 목록만 바뀜 */}
         <nav className="flex flex-wrap items-center gap-1" aria-label="주요 기능">
           {(isAuthenticated ? appNavItems : publicNavItems).map(({ label, to, end }) => (
             <NavLink

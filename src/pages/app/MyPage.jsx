@@ -1,40 +1,23 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Heartbeat, ChatCircleDots, Briefcase, UserCircle, Megaphone, Compass } from '@phosphor-icons/react'
 import { useAuth } from '../../context/AuthContext.jsx'
 import { usePreference } from '../../context/PreferenceContext.jsx'
 import { JOB_CATEGORIES, ALL_REGION, REMOTE_REGION, REGIONS, CAREER_LEVELS } from '../../constants/jobCategories.js'
-import { loadSessions } from '../../lib/chatSessions.js'
+import { fetchEmotionSummary } from '../../lib/emotionApi.js'
+import { fetchChatSessions } from '../../lib/chatApi.js'
 
-// 전부 더미 데이터 — 백엔드(kcELECTRA/SBERT/RAG) 연동 전 화면 확인용.
-const EMOTION_PATTERN = [
-  { label: '공포', value: 25 },
-  { label: '놀람', value: 40 },
-  { label: '분노', value: 15 },
-  { label: '슬픔', value: 30 },
-  { label: '행복', value: 85 },
-  { label: '혐오', value: 10 },
+// [감정상태 탭] 더미 데이터 → 백엔드 GET /emotions/summary 실제 데이터로 교체 (2026-10-12)
+// - 최근 주요 감정 패턴: 최근 30일 채팅에서 KcELECTRA가 분류한 감정 6종(중립 제외) 빈도
+// - 심리상태 리포트: 메시지 감정을 0(나쁨)~100(좋음) 점수로 바꿔 기간별 평균
+const EMOTION_AXES = ['공포', '놀람', '분노', '슬픔', '행복', '혐오']
+const PERIODS = [
+  { key: 'week', label: '일주일' },
+  { key: 'month', label: '한달' },
+  { key: 'year', label: '1년' },
 ]
 
-const PERIOD_DATA = {
-  week: {
-    label: '일주일',
-    dates: ['09/01', '09/02', '09/03', '09/04', '09/05', '09/06', '09/07'],
-    points: [65, 58, 72, 80, 75, 88, 85],
-  },
-  month: {
-    label: '한달',
-    dates: ['08/10', '08/17', '08/24', '08/31', '09/07'],
-    points: [50, 62, 70, 68, 85],
-  },
-  year: {
-    label: '1년',
-    dates: ['2025/10', '2025/12', '2026/02', '2026/04', '2026/06', '2026/08', '2026/09'],
-    points: [45, 55, 60, 75, 70, 82, 85],
-  },
-}
-
-// 날짜 표기를 Chat.jsx 세션 데이터(createdAt, timestamp)에 맞춰 'YYYY.MM.DD' 형식으로.
+// 날짜 표기 — 채팅로그 세션의 createdAt(ms)을 'YYYY.MM.DD'로.
 function formatSessionDate(timestamp) {
   const d = new Date(timestamp)
   const yyyy = d.getFullYear()
@@ -137,11 +120,12 @@ function TrendChart({ dates, points }) {
 
   const plotWidth = width - padLeft - padRight
   const plotHeight = height - padTop - padBottom
-  const xStep = plotWidth / (points.length - 1)
+  // 점이 1개뿐이면 (points.length - 1)이 0이 돼서 나눗셈이 깨지므로 가운데에 찍음
+  const xStep = points.length > 1 ? plotWidth / (points.length - 1) : 0
   const yTicks = [0, 25, 50, 75, 100]
 
   function xAt(index) {
-    return padLeft + index * xStep
+    return points.length > 1 ? padLeft + index * xStep : padLeft + plotWidth / 2
   }
   function yAt(value) {
     return padTop + plotHeight * (1 - value / 100)
@@ -205,9 +189,86 @@ function TrendChart({ dates, points }) {
 }
 
 export default function MyPage() {
-  const { user } = useAuth()
+  const { user, authFetch } = useAuth()
   const [activeTab, setActiveTab] = useState('profile')
   const [period, setPeriod] = useState('week')
+  // 감정상태 탭 데이터 — 탭을 열 때마다 새로 불러옴(방금 나눈 대화도 바로 반영되도록)
+  const [emotionSummary, setEmotionSummary] = useState(null)
+  const [emotionLoading, setEmotionLoading] = useState(false)
+  const [emotionError, setEmotionError] = useState(null)
+
+  useEffect(() => {
+    if (activeTab !== 'emotion') return
+    let cancelled = false
+    setEmotionLoading(true)
+    setEmotionError(null)
+    fetchEmotionSummary(authFetch)
+      .then((data) => {
+        if (!cancelled) setEmotionSummary(data)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setEmotionError(
+          err?.message === 'SESSION_EXPIRED'
+            ? '로그인이 만료되었어요. 다시 로그인해주세요.'
+            : '감정 기록을 불러오지 못했어요. 서버가 깨어나는 중일 수 있으니 잠시 후 다시 시도해주세요.',
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setEmotionLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, authFetch, user?.id])
+
+  // 채팅로그 탭 데이터 — Chat.jsx와 같은 chatApi.js(fetchChatSessions)를 그대로 써서
+  // 로그인한 계정의 실제 대화 목록(Supabase DB)을 불러옴. 메시지가 하나도 없는
+  // "새 대화"(빈 세션)는 실제로 나눈 대화가 아니므로 목록에서 제외.
+  const [chatSessions, setChatSessions] = useState([])
+  const [chatLogLoading, setChatLogLoading] = useState(false)
+  const [chatLogError, setChatLogError] = useState(null)
+
+  useEffect(() => {
+    if (activeTab !== 'chatlog') return
+    let cancelled = false
+    setChatLogLoading(true)
+    setChatLogError(null)
+    fetchChatSessions(authFetch)
+      .then((data) => {
+        if (cancelled) return
+        const sessions = data
+          .map((s) => ({
+            id: s.id,
+            title: s.title,
+            createdAt: Date.parse(s.created_at),
+            messageCount: s.messages.length,
+          }))
+          .filter((s) => s.messageCount > 0)
+          .sort((a, b) => b.createdAt - a.createdAt)
+        setChatSessions(sessions)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setChatLogError(
+          err?.message === 'SESSION_EXPIRED'
+            ? '로그인이 만료되었어요. 다시 로그인해주세요.'
+            : '대화 기록을 불러오지 못했어요. 잠시 후 다시 시도해주세요.',
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setChatLogLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, authFetch, user?.id])
+
+  const emotionPattern =
+    emotionSummary?.pattern ?? EMOTION_AXES.map((label) => ({ label, value: 0, ratio: 0, count: 0 }))
+  const hasPattern = (emotionSummary?.pattern_total ?? 0) > 0
+  const topEmotion = hasPattern ? [...emotionPattern].sort((a, b) => b.count - a.count)[0] : null
+  const trend = emotionSummary?.trend?.[period] ?? { dates: [], points: [] }
   const [profileSaved, setProfileSaved] = useState(false)
   const [editingInfo, setEditingInfo] = useState(false)
   const [notifyOn, setNotifyOn] = useState(true)
@@ -237,14 +298,6 @@ export default function MyPage() {
   // 땐 REGIONS의 공식 명칭(label, 예: '서울특별시')으로 바꿔서 보여줌. REGIONS에 없는
   // 값(ALL_REGION/REMOTE_REGION)은 그 문자열 자체가 이미 표시용 라벨이라 그대로 씀.
   const preferredRegionLabel = REGIONS.find((item) => item.value === preferredRegion)?.label ?? preferredRegion
-
-  // 채팅로그 탭 — Chat.jsx와 같은 localStorage(maeum:chat-sessions)를 그대로 읽어옴.
-  // 아직 채팅 내역을 DB에 저장하지 않고 브라우저에만 저장하는 단계라, 여기서도
-  // 백엔드 호출 없이 Chat.jsx가 쓰는 것과 동일한 데이터를 바로 보여줄 수 있음.
-  // 메시지가 하나도 없는 "새 대화"(빈 세션)는 실제로 나눈 대화가 아니므로 목록에서 제외.
-  const chatSessions = loadSessions()
-    .filter((session) => session.messages.length > 0)
-    .sort((a, b) => b.createdAt - a.createdAt)
 
   function handleProfileSubmit(event) {
     event.preventDefault()
@@ -293,18 +346,62 @@ export default function MyPage() {
       {/* 탭 전환마다 key로 다시 마운트시켜 fadeUp 애니메이션이 매번 재생되게 함 —
           참고 자료의 "클릭하면 스르륵 올라오는" 전환 효과. */}
       <div key={activeTab} className="animate-fade-up">
+        {activeTab === 'emotion' && emotionError && (
+          <div className="mb-4 rounded-btn bg-coral-bg px-4 py-2.5 text-[13px] font-medium text-coral-deep">
+            {emotionError}
+          </div>
+        )}
+
         {activeTab === 'emotion' && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="rounded-card bg-white p-6 shadow-1 sm:p-7">
-              <h3 className="text-h3 text-[17px] text-ink">최근 주요 감정 패턴</h3>
-              <EmotionRadar data={EMOTION_PATTERN} />
+              <div className="flex items-baseline justify-between gap-4">
+                <h3 className="text-h3 text-[17px] text-ink">최근 주요 감정 패턴</h3>
+                <span className="text-[12px] text-slate">최근 30일 대화 기준</span>
+              </div>
+
+              {emotionLoading && !emotionSummary ? (
+                <p className="py-24 text-center text-[14px] text-slate">감정 기록을 불러오는 중…</p>
+              ) : (
+                <>
+                  <EmotionRadar data={emotionPattern} />
+                  {hasPattern ? (
+                    <>
+                      <p className="mt-2 text-center text-[14px] text-ink">
+                        가장 많이 느낀 감정은 <span className="font-bold text-coral-deep">{topEmotion.label}</span>
+                        이에요 ({topEmotion.ratio}%)
+                      </p>
+                      <ul className="mt-4 grid grid-cols-3 gap-2">
+                        {emotionPattern.map(({ label, ratio }) => (
+                          <li
+                            key={label}
+                            className="flex items-center justify-between rounded-btn bg-canvas px-3 py-2 text-[12px]"
+                          >
+                            <span className="font-semibold text-ink">{label}</span>
+                            <span className="text-slate">{ratio}%</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-center text-[13px] leading-relaxed text-slate">
+                      아직 분석된 감정이 없어요.
+                      <br />
+                      <Link to="/home/chat" className="font-semibold text-coral-deep hover:underline">
+                        채팅
+                      </Link>
+                      에서 마음잇기와 이야기를 나누면 감정 패턴이 표시돼요.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
 
             <div className="rounded-card bg-white p-6 shadow-1 sm:p-7">
               <div className="flex items-center justify-between gap-4">
                 <h3 className="text-h3 text-[17px] text-ink">심리상태 리포트</h3>
                 <div className="flex gap-1 rounded-pill bg-canvas p-1">
-                  {Object.entries(PERIOD_DATA).map(([key, { label }]) => (
+                  {PERIODS.map(({ key, label }) => (
                     <button
                       key={key}
                       type="button"
@@ -319,22 +416,42 @@ export default function MyPage() {
                 </div>
               </div>
 
-              <div className="relative mt-4">
-                <div className="pointer-events-none absolute left-1 top-1 z-10 rounded-btn bg-coral-bg px-2 py-1 text-[11px] font-bold text-coral-deep">
-                  좋음 (100)
-                </div>
-                <div className="pointer-events-none absolute bottom-6 left-1 z-10 rounded-btn bg-canvas px-2 py-1 text-[11px] font-bold text-slate">
-                  나쁨 (0)
-                </div>
-                <TrendChart dates={PERIOD_DATA[period].dates} points={PERIOD_DATA[period].points} />
-              </div>
+              {trend.points.length > 0 ? (
+                <>
+                  <div className="relative mt-4">
+                    <div className="pointer-events-none absolute left-1 top-1 z-10 rounded-btn bg-coral-bg px-2 py-1 text-[11px] font-bold text-coral-deep">
+                      좋음 (100)
+                    </div>
+                    <div className="pointer-events-none absolute bottom-6 left-1 z-10 rounded-btn bg-canvas px-2 py-1 text-[11px] font-bold text-slate">
+                      나쁨 (0)
+                    </div>
+                    <TrendChart dates={trend.dates} points={trend.points} />
+                  </div>
+                  <p className="mt-2 text-[12px] leading-relaxed text-slate">
+                    {period === 'week' && '하루 단위'}
+                    {period === 'month' && '7일 단위'}
+                    {period === 'year' && '한 달 단위'} 평균 점수예요. 대화가 없었던 날은 표시하지 않아요.
+                  </p>
+                </>
+              ) : (
+                <p className="py-24 text-center text-[14px] text-slate">
+                  {emotionLoading ? '감정 기록을 불러오는 중…' : '이 기간에는 아직 대화 기록이 없어요.'}
+                </p>
+              )}
             </div>
           </div>
         )}
 
         {activeTab === 'chatlog' && (
           <div className="space-y-3">
-            {chatSessions.length === 0 ? (
+            {chatLogError && (
+              <div className="rounded-btn bg-coral-bg px-4 py-2.5 text-[13px] font-medium text-coral-deep">
+                {chatLogError}
+              </div>
+            )}
+            {chatLogLoading && chatSessions.length === 0 ? (
+              <p className="py-10 text-center text-[14px] text-slate">대화 기록을 불러오는 중…</p>
+            ) : chatSessions.length === 0 ? (
               <div className="rounded-card bg-white p-10 text-center shadow-1">
                 <p className="text-body text-slate">아직 나눈 대화가 없어요. 대화를 시작하면 여기에서 다시 확인할 수 있어요.</p>
                 <Link to="/home/chat" className="btn-accent mt-5 inline-flex">
@@ -350,7 +467,7 @@ export default function MyPage() {
                   <div>
                     <p className="font-semibold text-ink">{session.title}</p>
                     <p className="mt-1 text-[13px] text-slate">
-                      {formatSessionDate(session.createdAt)} · 메시지 {session.messages.length}개
+                      {formatSessionDate(session.createdAt)} · 메시지 {session.messageCount}개
                     </p>
                   </div>
                   <Link to={`/home/chat?session=${session.id}`} className="btn-secondary shrink-0">

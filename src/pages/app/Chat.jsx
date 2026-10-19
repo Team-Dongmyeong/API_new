@@ -1,24 +1,48 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Plus, PaperPlaneTilt, SidebarSimple, X } from '@phosphor-icons/react'
-import { sendChatMessage } from '../../lib/chatApi.js'
-import { CHAT_SESSIONS_STORAGE_KEY, createSession, loadSessions } from '../../lib/chatSessions.js'
+import { deleteChatSession, fetchChatSessions, sendChatMessage } from '../../lib/chatApi.js'
+import { useAuth } from '../../context/AuthContext.jsx'
 
 // 세션(대화방) 여러 개를 나눠 관리하는 채팅 화면 — 지난번 디자인 캔버스에서 정한
 // "Claude/Gemini처럼 세션을 나누고, 왼쪽에 열고 닫을 수 있는 목록"을 실제 컴포넌트로
 // 옮긴 버전. AppLayout이 모든 로그인 후 화면에 max-content 폭 + 상하 패딩을 공통으로
 // 씌우고 있어서(다른 페이지들과의 일관성을 위해 그 구조는 건드리지 않음), 채팅 영역은
-// 그 안에서 카드 하나(rounded-card)가 화면 높이 대부분을 채우는 형태로 구성함 —
-// 캔버스 시안처럼 완전히 풀블리드는 아니지만, 사이드바·말풍선 구조와 화이트/coral
-// 톤은 그대로 가져옴.
+// 그 안에서 카드 하나(rounded-card)가 화면 높이 대부분을 채우는 형태로 구성함.
 //
-// 감정/키워드 태그(캔버스 시안에 있던 "#백엔드" 같은 칩)는 아직 백엔드가 실제로
-// 분석해서 내려주는 데이터가 아니라서(그 부분은 kcELECTRA/SBERT 서빙 붙는 다음
-// 단계 몫) 여기서는 뺐음 — 지금 있는 진짜 데이터(제목, 메시지)만으로 구성.
+// [변경] 대화 기록 저장 위치: 브라우저 localStorage → Supabase DB(chat_sessions, chat_messages)
+// - 화면에 들어오면 로그인한 계정의 대화 목록을 서버에서 불러옴 (계정마다 기록이 분리됨)
+// - 다른 기기/브라우저에서 로그인해도 같은 기록이 보임
+// - "새 대화"는 첫 메시지를 보낼 때 서버에 대화방이 만들어짐 (그 전엔 화면에만 존재)
 //
-// 세션 목록/대화 내용은 지금 단계(Supabase 붙기 전)엔 로컬 브라우저에만
-// localStorage로 저장됨 — 새로고침해도 유지되지만, 다른 기기·다른 브라우저와는
-// 공유되지 않음.
+// [변경] 마이페이지 > 채팅로그 > "대화 보기"에서 /home/chat?session=<id>로 넘어온
+// 경우, 해당 세션을 바로 열어서 보여줌. 없거나 존재하지 않는 id면 기존처럼 가장
+// 최근 세션(목록 맨 앞)을 보여줌.
+
+function createSession() {
+  return {
+    id: crypto.randomUUID(), // 화면용 키. 서버에 저장되면 backendSessionId가 채워짐
+    backendSessionId: null,
+    title: '새 대화',
+    createdAt: Date.now(),
+    messages: [], // { role: 'user' | 'bot', text, time }
+  }
+}
+
+// 서버 응답 → 화면에서 쓰는 형태로 변환
+function fromServer(s) {
+  return {
+    id: s.id,
+    backendSessionId: s.id,
+    title: s.title,
+    createdAt: Date.parse(s.created_at),
+    messages: s.messages.map((m) => ({
+      role: m.role === 'assistant' ? 'bot' : 'user',
+      text: m.content,
+      time: Date.parse(m.created_at),
+    })),
+  }
+}
 
 function isToday(timestamp) {
   const d = new Date(timestamp)
@@ -26,31 +50,60 @@ function isToday(timestamp) {
   return d.toDateString() === now.toDateString()
 }
 
+function toErrorText(err) {
+  if (err?.message === 'SESSION_EXPIRED') return '로그인이 만료되었어요. 다시 로그인해주세요.'
+  return '응답을 받지 못했어요. 서버가 깨어나는 중일 수 있으니 잠시 후 다시 시도해주세요.'
+}
+
 export default function Chat() {
-  // 마이페이지 > 채팅로그 > "대화 보기"에서 /home/chat?session=<id>로 넘어온 경우,
-  // 해당 세션을 바로 열어서 보여줌. 없거나 존재하지 않는 id면 기존처럼 가장 최근
-  // 세션(목록 맨 앞)을 보여줌.
+  const { user, authFetch } = useAuth()
   const [searchParams] = useSearchParams()
-  const [sessions, setSessions] = useState(loadSessions)
-  const [activeId, setActiveId] = useState(() => {
-    const requestedId = searchParams.get('session')
-    const initialSessions = loadSessions()
-    if (requestedId && initialSessions.some((s) => s.id === requestedId)) return requestedId
-    return initialSessions[0]?.id
-  })
+  const [sessions, setSessions] = useState([])
+  const [activeId, setActiveId] = useState(null)
+  const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 768)
   const [error, setError] = useState(null)
   const scrollRef = useRef(null)
 
+  // 로그인한 계정이 바뀔 때마다 그 계정의 대화 기록을 서버에서 불러옴
   useEffect(() => {
-    try {
-      localStorage.setItem(CHAT_SESSIONS_STORAGE_KEY, JSON.stringify(sessions))
-    } catch {
-      // 저장 실패해도(용량 초과 등) 대화 자체는 계속 진행
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+
+    fetchChatSessions(authFetch)
+      .then((data) => {
+        if (cancelled) return
+        const loaded = data.map(fromServer)
+        const list = loaded.length > 0 ? loaded : [createSession()]
+        setSessions(list)
+        // 마이페이지 채팅로그의 "대화 보기"(?session=<id>)로 들어온 경우 그 세션을
+        // 바로 열고, 없거나 유효하지 않으면 기존처럼 가장 최근 세션을 보여줌.
+        const requestedId = searchParams.get('session')
+        const requested = requestedId && list.find((s) => s.id === requestedId)
+        setActiveId(requested ? requested.id : list[0].id)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        const fresh = createSession()
+        setSessions([fresh])
+        setActiveId(fresh.id)
+        setError(
+          err?.message === 'SESSION_EXPIRED'
+            ? toErrorText(err)
+            : '대화 기록을 불러오지 못했어요. 잠시 후 새로고침해주세요.',
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
     }
-  }, [sessions])
+  }, [user?.id, authFetch])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
@@ -79,17 +132,24 @@ export default function Chat() {
   }, [sessions])
 
   function handleNewSession() {
-    const next = createSession()
-    setSessions((prev) => [next, ...prev])
-    setActiveId(next.id)
+    // 아직 아무 말도 안 한 빈 새 대화가 있으면 그걸 재사용 (빈 대화가 쌓이지 않게)
+    const emptyDraft = sessions.find((s) => !s.backendSessionId && s.messages.length === 0)
+    if (emptyDraft) {
+      setActiveId(emptyDraft.id)
+    } else {
+      const next = createSession()
+      setSessions((prev) => [next, ...prev])
+      setActiveId(next.id)
+    }
     setDraft('')
     setError(null)
   }
 
-  // 대화 목록에서 세션 하나를 삭제. 지우는 세션이 지금 보고 있던 세션이면
-  // 남은 것 중 맨 위(가장 최근) 세션으로 자동 이동하고, 하나도 안 남으면
-  // 새 대화를 하나 만들어서 화면이 비지 않게 함.
+  // 대화 목록에서 세션 하나를 삭제 (서버에 저장된 대화면 DB에서도 삭제).
+  // 지우는 세션이 지금 보고 있던 세션이면 남은 것 중 맨 위 세션으로 이동하고,
+  // 하나도 안 남으면 새 대화를 하나 만들어서 화면이 비지 않게 함.
   function handleDeleteSession(id) {
+    const target = sessions.find((s) => s.id === id)
     setSessions((prev) => {
       const remaining = prev.filter((s) => s.id !== id)
       const next = remaining.length > 0 ? remaining : [createSession()]
@@ -98,18 +158,24 @@ export default function Chat() {
       }
       return next
     })
+    if (target?.backendSessionId) {
+      deleteChatSession(authFetch, target.backendSessionId).catch(() => {
+        setError('대화를 삭제하지 못했어요. 새로고침 후 다시 시도해주세요.')
+      })
+    }
   }
 
   async function handleSend() {
     const text = draft.trim()
     if (!text || sending || !activeSession) return
 
+    const targetId = activeSession.id
     const isFirstMessage = activeSession.messages.length === 0
     const userMessage = { role: 'user', text, time: Date.now() }
 
     setSessions((prev) =>
       prev.map((s) =>
-        s.id === activeSession.id
+        s.id === targetId
           ? {
               ...s,
               title: isFirstMessage ? text.slice(0, 22) + (text.length > 22 ? '…' : '') : s.title,
@@ -123,10 +189,13 @@ export default function Chat() {
     setError(null)
 
     try {
-      const data = await sendChatMessage({ message: text, sessionId: activeSession.backendSessionId })
+      const data = await sendChatMessage(authFetch, {
+        message: text,
+        sessionId: activeSession.backendSessionId,
+      })
       setSessions((prev) =>
         prev.map((s) =>
-          s.id === activeSession.id
+          s.id === targetId
             ? {
                 ...s,
                 backendSessionId: data.session_id,
@@ -135,8 +204,21 @@ export default function Chat() {
             : s,
         ),
       )
-    } catch {
-      setError('백엔드 서버에 연결하지 못했어요. 로컬에서 FastAPI 서버(uvicorn)가 켜져 있는지 확인해주세요.')
+    } catch (err) {
+      // 실패하면 방금 보낸 말풍선을 되돌리고 입력창에 다시 넣어줌 (다시 보내기 쉽게)
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === targetId
+            ? {
+                ...s,
+                title: isFirstMessage ? '새 대화' : s.title,
+                messages: s.messages.filter((m) => m !== userMessage),
+              }
+            : s,
+        ),
+      )
+      setDraft(text)
+      setError(toErrorText(err))
     } finally {
       setSending(false)
     }
@@ -235,7 +317,8 @@ export default function Chat() {
         </div>
 
         <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-6">
-          {activeSession?.messages.length === 0 && (
+          {loading && <p className="text-[14px] leading-relaxed text-slate">대화 기록을 불러오는 중…</p>}
+          {!loading && activeSession?.messages.length === 0 && (
             <p className="text-[14px] leading-relaxed text-slate">
               마음잇기에게 편하게 이야기를 시작해보세요. 취업 준비 중 고민이나 감정을 나눠주시면 함께 이야기
               나눠볼게요.
@@ -280,7 +363,7 @@ export default function Chat() {
             <button
               type="button"
               onClick={handleSend}
-              disabled={sending || !draft.trim()}
+              disabled={sending || loading || !draft.trim()}
               aria-label="전송"
               className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-pill bg-coral text-white transition-transform duration-150 ease-out hover:-translate-y-0.5 active:translate-y-0 disabled:pointer-events-none disabled:opacity-40"
             >
