@@ -1,26 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
-import { ChatCircleDots, Heartbeat, PuzzlePiece, Briefcase, Sparkle, SignOut } from '@phosphor-icons/react'
+import { Sparkle, SignOut } from '@phosphor-icons/react'
 import { useAuth } from '../context/AuthContext.jsx'
 import PreferenceQuiz from './PreferenceQuiz.jsx'
 
-// 메인 메뉴 (로그아웃 상태) — 마음잇기의 네 가지 축(대화 / 감정 케어 / 직무 매칭
-// / 채용정보). 아직 계정이 없는 상태라 전부 /signup으로 연결됨.
-const menuItems = [
-  { label: '대화 시작하기', Icon: ChatCircleDots, to: '/signup' },
-  { label: '감정 케어', Icon: Heartbeat, to: '/signup' },
-  { label: '직무 매칭', Icon: PuzzlePiece, to: '/signup' },
-  { label: '채용정보', Icon: Briefcase, to: '/signup' },
+// 메인 메뉴 (로그아웃 상태) — 로그인 상태와 동일한 스타일의 상단 바를 그대로
+// 쓰되, 계정 없이도 바로 이용 가능한 항목(홈/공지사항/이용가이드/FAQ)만 노출.
+// 채팅·채용공고·마이페이지는 로그인이 필요한 기능이라 제외.
+const publicNavItems = [
+  { label: '홈', to: '/', end: true },
+  { label: '공지사항', to: '/notice' },
+  { label: '이용가이드', to: '/guide' },
+  { label: 'FAQ', to: '/faq' },
 ]
 
-// itdaa의 "AI 진단 검사" 항목처럼 호버 시 서브메뉴 3개(진로/인성/기업핏 검사)가
-// 열리는 형태 — 우리 서비스에 맞는 세 가지 진단으로 대체.
-const diagnosisSubItems = ['감정 진단', '직무 적성 진단', '종합 리포트']
-
-// 메인 메뉴 (로그인 상태) — 실제로 동작하는 내비게이션. 이용가이드/FAQ도 이제
-// 여기로 옮겨와서, 로그인 후에는 헤더 우측의 별도 "이용 안내" 링크 줄이 없어짐.
-// 아이콘은 로그인 전 메뉴에만 쓰고, 로그인 후에는 텍스트만 — 항목이 7개로
-// 늘면서 아이콘까지 있으면 한 줄이 너무 붐벼 보여서 뺐어.
+// 메인 메뉴 (로그인 상태) — 실제로 동작하는 내비게이션.
 const appNavItems = [
   { label: '홈', to: '/home', end: true },
   { label: '채팅', to: '/home/chat' },
@@ -36,7 +30,6 @@ const appNavItems = [
 // 채워나가는 영역이라, 이쪽은 "틀"이 되는 내비게이션 크기/여백/색상 규칙을
 // 최대한 정리하는 데 집중.
 export default function Header() {
-  const [diagnosisOpen, setDiagnosisOpen] = useState(false)
   const { user, isAuthenticated, logout } = useAuth()
   const navigate = useNavigate()
 
@@ -61,13 +54,6 @@ export default function Header() {
     navigate('/', { replace: true })
   }
 
-  // 클릭해도 페이지가 안 바뀌는 항목(AI 진단 검사처럼 그 자리에서 열리는
-  // 드롭다운)만 "선택된 상태"가 실제로 존재해서 배경을 채울 수 있음. 나머지
-  // 로그아웃 메뉴는 전부 /signup으로 바로 이동하는 링크라 "클릭된 채로 남는"
-  // 상태 자체가 없고, 로그인 메뉴는 NavLink의 실제 경로 활성 상태로 채워짐.
-  const navItemClass =
-    'inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-pill px-3.5 py-2 text-[14px] font-semibold transition-colors text-black hover:bg-canvas-lift hover:text-coral'
-
   return (
     <header className="sticky top-0 z-40 border-b border-ink/10 bg-white">
       <div className="mx-auto flex max-w-content flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
@@ -79,77 +65,24 @@ export default function Header() {
           maeum
         </Link>
 
-        {/* 메인 메뉴 — 로고와 로그인/로그아웃 사이, 한 줄로 압축 */}
+        {/* 메인 메뉴 — 로고와 로그인/로그아웃 사이, 한 줄로 압축. 로그인 여부와
+            상관없이 동일한 스타일의 바를 쓰고, 항목 목록만 바뀜. */}
         <nav className="flex flex-wrap items-center gap-1" aria-label="주요 기능">
-          {isAuthenticated
-            ? appNavItems.map(({ label, to, end }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={end}
-                  className={({ isActive }) =>
-                    `inline-flex min-h-[40px] shrink-0 items-center whitespace-nowrap rounded-pill px-3.5 py-2 text-[14px] font-semibold transition-colors ${
-                      isActive ? 'bg-coral text-white' : 'text-black hover:bg-canvas-lift hover:text-coral'
-                    }`
-                  }
-                >
-                  {label}
-                </NavLink>
-              ))
-            : menuItems.map(({ label, Icon, to }) => (
-                <Link key={label} to={to} className={navItemClass}>
-                  <Icon size={16} weight="duotone" aria-hidden="true" />
-                  {label}
-                </Link>
-              ))}
-
-          {!isAuthenticated && (
-            <div
-              className="relative shrink-0"
-              onMouseEnter={() => setDiagnosisOpen(true)}
-              onMouseLeave={() => setDiagnosisOpen(false)}
+          {(isAuthenticated ? appNavItems : publicNavItems).map(({ label, to, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              className={({ isActive }) =>
+                `inline-flex min-h-[40px] shrink-0 items-center whitespace-nowrap rounded-pill px-3.5 py-2 text-[14px] font-semibold transition-colors ${
+                  isActive ? 'bg-coral text-white' : 'text-black hover:bg-canvas-lift hover:text-coral'
+                }`
+              }
             >
-              <button
-                type="button"
-                onFocus={() => setDiagnosisOpen(true)}
-                onBlur={() => setDiagnosisOpen(false)}
-                aria-haspopup="true"
-                aria-expanded={diagnosisOpen}
-                className={`${navItemClass} ${diagnosisOpen ? '!bg-coral !text-white' : ''}`}
-              >
-                <Sparkle size={16} weight="bold" aria-hidden="true" />
-                AI 진단 검사
-              </button>
-
-              {diagnosisOpen && (
-                <div className="absolute left-0 top-full z-50 w-44 rounded-btn border border-ink/10 bg-white py-2 shadow-2">
-                  {diagnosisSubItems.map((item) => (
-                    <Link
-                      key={item}
-                      to="/signup"
-                      className="block px-4 py-2 text-[14px] font-medium text-ink hover:bg-canvas-lift hover:text-coral"
-                    >
-                      {item}
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+              {label}
+            </NavLink>
+          ))}
         </nav>
-
-        {/* 로그인 전에만 쓰는 보조 유틸 링크 — 로그인 후에는 이용가이드/FAQ가
-            위 메인 메뉴로 옮겨갔으니 이 줄은 필요 없음. */}
-        {!isAuthenticated && (
-          <nav className="ml-auto hidden items-center gap-5 text-[13px] text-ink-soft md:flex" aria-label="이용 안내">
-            <a href="#" className="hover:text-ink">
-              이용가이드
-            </a>
-            <a href="#" className="hover:text-ink">
-              자주 묻는 질문
-            </a>
-          </nav>
-        )}
 
         {isAuthenticated ? (
           <div className="ml-auto flex shrink-0 items-center gap-3">
@@ -179,7 +112,7 @@ export default function Header() {
         ) : (
           <Link
             to="/login"
-            className="ml-auto inline-flex min-h-[36px] shrink-0 items-center justify-center rounded-btn border-[1.5px] border-coral px-4 text-[13px] font-semibold text-coral transition-transform duration-150 ease-out hover:-translate-y-0.5 active:translate-y-0 md:ml-0"
+            className="ml-auto inline-flex min-h-[36px] shrink-0 items-center justify-center rounded-btn border-[1.5px] border-coral px-4 text-[13px] font-semibold text-coral transition-transform duration-150 ease-out hover:-translate-y-0.5 active:translate-y-0"
           >
             로그인
           </Link>
